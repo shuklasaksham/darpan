@@ -200,7 +200,20 @@ app.get('/api/recent', requireUser, async (req, res, next) => {
        FROM shoot_plans p WHERE p.user_id = $1 ORDER BY p.created_at DESC LIMIT 12`,
       [req.user.id],
     );
-    res.json({ shoots: rows.map((r) => ({ planId: Number(r.id), createdAt: r.created_at, brief: r.brief, script: r.plan, kept: r.kept, reel: r.reel })) });
+    // file_path survives a redeploy even when the file doesn't; check the disk.
+    const { rows: paths } = await pool.query('SELECT id, file_path FROM takes WHERE user_id = $1 AND kept AND file_path IS NOT NULL', [req.user.id]);
+    const present = new Set();
+    for (const t of paths) if (await fileExists(t.file_path)) present.add(Number(t.id));
+    res.json({
+      shoots: rows.map((r) => ({
+        planId: Number(r.id),
+        createdAt: r.created_at,
+        brief: r.brief,
+        script: r.plan,
+        kept: r.kept.map((k) => ({ ...k, available: present.has(Number(k.id)) })),
+        reel: r.reel,
+      })),
+    });
   } catch (err) {
     next(err);
   }

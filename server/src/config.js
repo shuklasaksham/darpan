@@ -1,5 +1,19 @@
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+/** The Render Disk at /var/data if it's attached and writable, else the temp folder. */
+function pickUploadDir() {
+  const persistent = '/var/data/darpan-uploads';
+  try {
+    fs.mkdirSync(persistent, { recursive: true });
+    fs.accessSync(persistent, fs.constants.W_OK);
+    return persistent;
+  } catch {
+    if (fs.existsSync('/var/data')) console.warn('/var/data is not writable; takes will not survive redeploys');
+    return path.join(os.tmpdir(), 'darpan-uploads');
+  }
+}
 
 export const config = {
   port: Number(process.env.PORT) || 3000,
@@ -35,7 +49,9 @@ export const config = {
   agenticorgDirectorAgentId: process.env.AGENTICORG_DIRECTOR_AGENT_ID,
   agenticorgBaseUrl: process.env.AGENTICORG_BASE_URL || 'https://app.agenticorg.ai',
   // Uploads are streamed to disk, never buffered in memory (the server has 512 MB).
-  uploadDir: process.env.UPLOAD_DIR || path.join(os.tmpdir(), 'darpan-uploads'),
+  // Takes must survive redeploys: use a Render Disk mounted at /var/data when
+  // there is one; the container's temp folder is wiped on every deploy.
+  uploadDir: process.env.UPLOAD_DIR || pickUploadDir(),
   maxUploadBytes: Number(process.env.MAX_UPLOAD_MB || 200) * 1024 * 1024,
   staticDir: process.env.STATIC_DIR || path.resolve(import.meta.dirname, '../../app/dist'),
 };

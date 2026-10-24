@@ -15,7 +15,6 @@ RUN apt-get update \
 ENV NODE_ENV=production \
     # Keep the V8 heap well under Render's 512 MB so ffmpeg has room too.
     NODE_OPTIONS=--max-old-space-size=320 \
-    UPLOAD_DIR=/tmp/darpan-uploads \
     STATIC_DIR=/srv/app/dist
 
 WORKDIR /srv/server

@@ -6,7 +6,7 @@ import { goPro } from './Plan.jsx';
  * Once every shot has a kept take: review them, choose captions, make the reel,
  * watch progress, then play, download or share the result.
  */
-export default function Reel({ shots, kept, onBack, onDone }) {
+export default function Reel({ shots, kept, onBack, onDone, onMissing }) {
   const [captions, setCaptions] = useState(true);
   const [phase, setPhase] = useState('review'); // review | making | done | error
   const [status, setStatus] = useState({ progress: 0, stage: '' });
@@ -37,7 +37,11 @@ export default function Reel({ shots, kept, onBack, onDone }) {
         setStatus({ progress: 0, stage: 'Re-sending some takes' });
         for (const id of err.body.missing) {
           const entry = Object.values(kept).find((k) => k.takeId === id);
-          if (!entry?.blob) throw new Error('A take has expired on the server. Record that shot again.');
+          if (!entry?.blob) {
+            // Gone from the server and not on this phone: re-record those shots.
+            onMissing(err.body.missing);
+            return;
+          }
           await reuploadTake(id, entry.blob);
         }
         created = await makeReel({ takeIds, captions });

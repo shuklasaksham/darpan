@@ -78,6 +78,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   const [countdown, setCountdown] = useState(0);
   const [kept, setKept] = useState(initialKept ?? {}); // shotIndex -> { takeId, blob, url, result }
   const [reelOpen, setReelOpen] = useState(false);
+  const [lostNotice, setLostNotice] = useState(0); // takes lost on the server, to re-record
   const keptRef = useRef(kept);
   keptRef.current = kept;
   // Kept takes live in memory as blobs until the camera closes.
@@ -675,6 +676,11 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
       {shot && <Teleprompter shot={shot} recording={recording} />}
 
       <div className="camera-lower">
+        {lostNotice > 0 && !recording && (
+          <p className="coach-tip" onClick={() => setLostNotice(0)}>
+            {lostNotice === 1 ? 'This shot needs' : `${lostNotice} shots need`} recording again: the server lost the take. Tap record when ready.
+          </p>
+        )}
         {visionState === 'off' && <p className="coach-tip muted">Live checks aren't available on this phone. You can still record.</p>}
         {tip && !countdown && <p className={`coach-tip ${recording ? 'silent' : ''}`}>{tip.text}</p>}
         {!recording && !tip && visionState === 'ready' && shot && <p className="coach-tip good">Looking good. Tap record when ready.</p>}
@@ -759,7 +765,19 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
       </div>
 
       {reelOpen && allKept && (
-        <Reel shots={shots} kept={kept} onBack={() => setReelOpen(false)} onDone={onClose} />
+        <Reel
+          shots={shots}
+          kept={kept}
+          onBack={() => setReelOpen(false)}
+          onDone={onClose}
+          onMissing={(takeIds) => {
+            const lost = Object.entries(kept).filter(([, k]) => takeIds.includes(k.takeId)).map(([i]) => Number(i));
+            setKept((current) => Object.fromEntries(Object.entries(current).filter(([i]) => !lost.includes(Number(i)))));
+            setReelOpen(false);
+            if (lost.length) setShotIndex(Math.min(...lost));
+            setLostNotice(lost.length);
+          }}
+        />
       )}
 
       {debug && debugInfo && <DebugPanel info={debugInfo} claude={claude} visionState={visionState} />}
