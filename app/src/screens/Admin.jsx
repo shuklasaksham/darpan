@@ -27,6 +27,19 @@ export default function Admin() {
     load();
   }, []);
 
+  async function editUser(id, change) {
+    try {
+      await api(`/api/admin/users/${id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(change),
+      });
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   async function signIn(e) {
     e.preventDefault();
     setError('');
@@ -84,7 +97,7 @@ export default function Admin() {
       </header>
 
       <section className="stat-grid">
-        <Stat label="Creators" value={t.users} sub={`+${t.users_7d} this week`} />
+        <Stat label="Creators" value={t.users} sub={`+${t.users_7d} this week · ${t.dev_users ?? 0} dev`} />
         <Stat label="Active this week" value={t.active_7d} sub="recorded a take" />
         <Stat label="Pro creators" value={t.pro_users} highlight />
         <Stat label="Revenue this month" value={rupees(t.revenue_month_paise)} sub={`${rupees(t.revenue_paise)} all time`} highlight />
@@ -127,9 +140,22 @@ export default function Admin() {
       </section>
 
       <Table
-        title="Newest creators"
-        cols={['Joined', 'Username', 'Name', 'Niche', 'Plan', 'Takes', 'Reels']}
-        rows={data.users.map((u) => [when(u.created_at), `@${u.username}`, u.name, u.niche, u.pro ? 'Pro' : 'Free', u.takes, u.reels])}
+        title="Creators"
+        cols={['Joined', 'Username', 'Name', 'Niche', 'Plan', 'Takes', 'Reels', '']}
+        rows={data.users.map((u) => [
+          when(u.created_at),
+          <>@{u.username} {u.is_dev && <span className="tag dev-tag">DEV</span>}</>,
+          u.name,
+          u.niche,
+          u.pro ? (u.pro_complimentary ? 'Pro (free)' : 'Pro') : 'Free',
+          u.takes,
+          u.reels,
+          <span className="row admin-actions">
+            <button onClick={() => { const name = window.prompt('New name', u.name); if (name) editUser(u.id, { name }); }}>Rename</button>
+            <button onClick={() => editUser(u.id, { proDays: 30 })}>Give Pro</button>
+            <button onClick={() => editUser(u.id, { dev: !u.is_dev })}>{u.is_dev ? 'Not dev' : 'Dev'}</button>
+          </span>,
+        ])}
       />
       <Table
         title="Payments"
