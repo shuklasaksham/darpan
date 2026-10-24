@@ -93,3 +93,35 @@ export function Silhouette({ framing, pose, aspect, matched, mirrored }) {
     </svg>
   );
 }
+
+/**
+ * A square marking where the face should sit for this framing, drawn as corner
+ * brackets so it never covers the creator. Green when the framing is right.
+ */
+export function FrameGuide({ framing, aspect, matched }) {
+  const { headTop, scale } = framingFor(framing);
+  const H = 1000;
+  const W = aspect * H;
+  // Face from forehead to chin, with a little room around it.
+  const side = Math.max(0.08, CHIN * scale * 1.35) * H;
+  const cx = W / 2;
+  const cy = (headTop + EYE * scale) * H;
+  const x = cx - side / 2;
+  const y = cy - side / 2;
+  const c = side * 0.22; // bracket length
+  const color = matched ? '#5fd08f' : '#ffffff';
+  const corners = [
+    `M${x},${y + c} V${y} H${x + c}`,
+    `M${x + side - c},${y} H${x + side} V${y + c}`,
+    `M${x + side},${y + side - c} V${y + side} H${x + side - c}`,
+    `M${x + c},${y + side} H${x} V${y + side - c}`,
+  ];
+  return (
+    <svg className="silhouette" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+      <rect x={x} y={y} width={side} height={side} rx={side * 0.06} fill="none" stroke={color} strokeOpacity="0.25" strokeWidth="2" />
+      {corners.map((d) => (
+        <path key={d} d={d} fill="none" stroke={color} strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
+      ))}
+    </svg>
+  );
+}

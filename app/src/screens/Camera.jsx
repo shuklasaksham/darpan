@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { checkFrame, keepTake, writeScript, uploadTake } from '../api.js';
 import Reel from './Reel.jsx';
 import { pickMimeType, stopStream } from '../media.js';
-import { Silhouette } from '../camera/silhouette.jsx';
+import { FrameGuide } from '../camera/silhouette.jsx';
 import { framingFor, headRegion, targetsFor } from '../camera/framing.js';
 import { detectFace, eyeLookDown, loadFaceDetector, loadFaceLandmarker, loadPoseLandmarker } from '../camera/vision.js';
 import { bodyGeometry, faceGeometry, framingProblems, lightProblems, lightReadings, soundProblems } from '../camera/checks.js';
@@ -137,10 +137,14 @@ export default function Camera({ shoot, planned: initialPlan, health, onClose })
     [],
   );
 
+  // The camera is only on while shooting: off during take review and the reel screen.
+  const cameraOn = !take && !reelOpen;
+
   useEffect(() => {
     let cancelled = false;
     setCameraError('');
     setVideoReady(false);
+    if (!cameraOn) return;
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraError("This browser can't open the camera here.");
       return;
@@ -168,7 +172,7 @@ export default function Camera({ shoot, planned: initialPlan, health, onClose })
       streamRef.current = null;
       if (videoRef.current) videoRef.current.srcObject = null;
     };
-  }, [facing]);
+  }, [facing, cameraOn]);
 
   useEffect(() => {
     if (!recording) return;
@@ -609,7 +613,7 @@ export default function Camera({ shoot, planned: initialPlan, health, onClose })
           onLoadedMetadata={() => setVideoReady(true)}
         />
         {shot && !recording && (
-          <Silhouette framing={framing} pose={shot.pose} aspect={aspect} matched={matched} mirrored={mirrored} />
+          <FrameGuide framing={framing} aspect={aspect} matched={matched} />
         )}
         {debug && debugInfo && <DebugOverlay info={debugInfo} aspect={aspect} mirrored={mirrored} />}
       </div>
