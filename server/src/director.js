@@ -9,7 +9,7 @@ const client = config.agenticorgApiKey
   ? new AgenticOrg({
       apiKey: config.agenticorgApiKey,
       baseUrl: config.agenticorgBaseUrl,
-      timeout: 45_000,
+      timeout: 60_000,
     })
   : null;
 
@@ -21,6 +21,13 @@ export class DirectorError extends Error {
     this.status = status;
   }
 }
+
+const TASKS = {
+  review_script: (i) =>
+    `Review this reel script for a first-time Indian creator (niche: ${i.creator_niche}, language: ${i.language}) and reply only with JSON { "notes": [up to 3 short, specific suggestions] }. Script: ${JSON.stringify(i.script)}`,
+  suggest_ideas: (i) =>
+    `Suggest 4-6 reel ideas for a first-time Indian creator in the niche "${i.creator_niche}", in ${i.language}. Reply only with JSON { "ideas": [{ "title", "format", "why" }] }.`,
+};
 
 const OUTPUT_FORMATS = {
   suggest_ideas: 'JSON: { ideas: [{ title, format, why }] } with 4-6 ideas',
@@ -35,7 +42,8 @@ async function ask(action, inputs) {
   try {
     result = await client.agents.run(config.agenticorgDirectorAgentId, {
       action,
-      inputs,
+      // Chat-style AgenticOrg agents read `task`; the structured fields ride along.
+      inputs: { task: TASKS[action](inputs), ...inputs },
       context: {
         app: 'darpan',
         audience: 'first-time Indian creators shooting vertical reels on a phone',
