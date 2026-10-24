@@ -27,19 +27,6 @@ export default function Admin() {
     load();
   }, []);
 
-  async function editUser(id, change) {
-    try {
-      await api(`/api/admin/users/${id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(change),
-      });
-      await load();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
   async function signIn(e) {
     e.preventDefault();
     setError('');
@@ -141,21 +128,13 @@ export default function Admin() {
 
       <Table
         title="Creators"
-        cols={['Joined', 'Username', 'Name', 'Niche', 'Plan', 'Takes', 'Reels', '']}
-        rows={data.users.map((u) => [
-          when(u.created_at),
-          <>@{u.username} {u.is_dev && <span className="tag dev-tag">DEV</span>}</>,
-          u.name,
-          u.niche,
-          u.pro ? (u.pro_complimentary ? 'Pro (free)' : 'Pro') : 'Free',
-          u.takes,
-          u.reels,
-          <span className="row admin-actions">
-            <button onClick={() => { const name = window.prompt('New name', u.name); if (name) editUser(u.id, { name }); }}>Rename</button>
-            <button onClick={() => editUser(u.id, { proDays: 30 })}>Give Pro</button>
-            <button onClick={() => editUser(u.id, { dev: !u.is_dev })}>{u.is_dev ? 'Not dev' : 'Dev'}</button>
-          </span>,
-        ])}
+        cols={['Joined', 'Username', 'Name', 'Niche', 'Plan', 'Takes', 'Reels']}
+        rows={data.users.filter((u) => !u.is_dev).map(creatorRow)}
+      />
+      <Table
+        title="Dev accounts"
+        cols={['Joined', 'Username', 'Name', 'Niche', 'Plan', 'Takes', 'Reels']}
+        rows={data.users.filter((u) => u.is_dev).map(creatorRow)}
       />
       <Table
         title="Payments"
@@ -187,6 +166,16 @@ export default function Admin() {
     </div>
   );
 }
+
+const creatorRow = (u) => [
+  when(u.created_at),
+  `@${u.username}`,
+  u.name,
+  u.niche,
+  u.pro ? (u.pro_complimentary ? 'Pro (free)' : 'Pro') : 'Free',
+  u.takes,
+  u.reels,
+];
 
 function Stat({ label, value, sub, highlight }) {
   return (

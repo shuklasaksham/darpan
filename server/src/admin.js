@@ -12,6 +12,9 @@ import { paymentProvider, paymentsConfigured } from './billing.js';
 // separate from creator accounts; the session is a signed, httpOnly cookie.
 
 const COOKIE = 'darpan_admin';
+// The team's own accounts: kept out of totals and listed separately.
+const DEV_FIRST_NAMES = ['saksham', 'tanay', 'abhinav'];
+const DEV = `(is_dev OR lower(split_part(trim(name), ' ', 1)) = ANY('{${DEV_FIRST_NAMES.join(',')}}'))`;
 const SESSION_MS = 12 * 60 * 60 * 1000;
 export const adminConfigured = Boolean(config.adminPassword && config.adminPassword.length >= 12);
 
@@ -61,28 +64,6 @@ adminRouter.post('/api/admin/logout', (_req, res) => {
   res.json({ ok: true });
 });
 
-// Edit a creator: rename, give complimentary Pro (not counted as revenue), or mark as a dev account.
-adminRouter.post('/api/admin/users/:id', async (req, res, next) => {
-  if (!isAdmin(req)) return res.status(401).json({ error: 'Please sign in' });
-  const { name, proDays, dev } = req.body ?? {};
-  try {
-    if (typeof name === 'string' && name.trim()) {
-      await pool.query('UPDATE users SET name = $2 WHERE id = $1', [req.params.id, name.trim().slice(0, 60)]);
-    }
-    if (Number(proDays) > 0) {
-      await pool.query(
-        `UPDATE users SET pro_complimentary = true,
-           pro_until = GREATEST(COALESCE(pro_until, now()), now()) + make_interval(days => $2) WHERE id = $1`,
-        [req.params.id, Math.min(3650, Math.round(Number(proDays)))],
-      );
-    }
-    if (typeof dev === 'boolean') await pool.query('UPDATE users SET is_dev = $2 WHERE id = $1', [req.params.id, dev]);
-    res.json({ ok: true });
-  } catch (err) {
-    next(err);
-  }
-});
-
 adminRouter.get('/api/admin/stats', async (req, res, next) => {
   if (!isAdmin(req)) return res.status(401).json({ error: 'Please sign in' });
   if (!pool) return res.status(503).json({ error: 'No database' });
@@ -91,10 +72,10 @@ adminRouter.get('/api/admin/stats', async (req, res, next) => {
     const all = async (sql) => (await pool.query(sql)).rows;
     const [totals, daily, users, payments, reels, takes] = await Promise.all([
       one(`SELECT
-        (SELECT count(*)::int FROM users WHERE NOT is_dev) AS users,
-        (SELECT count(*)::int FROM users WHERE is_dev) AS dev_users,
-        (SELECT count(*)::int FROM users WHERE NOT is_dev AND created_at > now() - interval '7 days') AS users_7d,
-        (SELECT count(*)::int FROM users WHERE NOT is_dev AND pro_until > now()) AS pro_users,
+        (SELECT count(*)::int FROM users WHERE NOT ${DEV}) AS users,
+        (SELECT count(*)::int FROM users WHERE ${DEV}) AS dev_users,
+        (SELECT count(*)::int FROM users WHERE NOT ${DEV} AND created_at > now() - interval '7 days') AS users_7d,
+        (SELECT count(*)::int FROM users WHERE NOT ${DEV} AND pro_until > now()) AS pro_users,
         (SELECT count(*)::int FROM shoot_plans) AS scripts,
         (SELECT count(*)::int FROM shoot_plans WHERE created_at > now() - interval '7 days') AS scripts_7d,
         (SELECT count(*)::int FROM takes) AS takes,
@@ -103,17 +84,17 @@ adminRouter.get('/api/admin/stats', async (req, res, next) => {
         (SELECT count(*)::int FROM reels WHERE status = 'error') AS reels_failed,
         (SELECT coalesce(sum(amount_paise), 0)::bigint FROM payments WHERE status = 'paid') AS revenue_paise,
         (SELECT coalesce(sum(amount_paise), 0)::bigint FROM payments WHERE status = 'paid' AND paid_at > date_trunc('month', now())) AS revenue_month_paise,
-        (SELECT count(DISTINCT t.user_id)::int FROM takes t JOIN users u ON u.id = t.user_id WHERE NOT u.is_dev AND t.created_at > now() - interval '7 days') AS active_7d`),
+        (SELECT count(DISTINCT t.user_id)::int FROM takes t JOIN users u ON u.id = t.user_id WHERE NOT ${DEV.replaceAll('is_dev', 'u.is_dev').replaceAll('name)', 'u.name)')} AND t.created_at > now() - interval '7 days') AS active_7d`),
       all(`SELECT to_char(d, 'DD Mon') AS day,
           (SELECT count(*)::int FROM users WHERE created_at::date = d) AS signups,
           (SELECT count(*)::int FROM takes WHERE created_at::date = d) AS takes,
           (SELECT count(*)::int FROM reels WHERE created_at::date = d AND status = 'done') AS reels
         FROM generate_series(current_date - 13, current_date, interval '1 day') AS d ORDER BY d`),
       all(`SELECT u.id, u.username, u.name, u.niche, u.gender, u.created_at, u.pro_until > now() AS pro,
-          u.pro_until, u.is_dev, u.pro_complimentary,
+          u.pro_until, ${DEV.replaceAll('is_dev', 'u.is_dev').replaceAll('name)', 'u.name)')} AS is_dev, u.pro_complimentary,
           (SELECT count(*)::int FROM takes t WHERE t.user_id = u.id) AS takes,
           (SELECT count(*)::int FROM reels r WHERE r.user_id = u.id AND r.status = 'done') AS reels
-        FROM users u ORDER BY u.created_at DESC LIMIT 50`),
+        FROM users u ORDER BY u.created_at DESC LIMIT 100`),
       all(`SELECT p.created_at, u.username, p.amount_paise, p.status, p.pine_status, p.merchant_order_reference
         FROM payments p JOIN users u ON u.id = p.user_id ORDER BY p.created_at DESC LIMIT 30`),
       all(`SELECT r.id, r.created_at, u.username, r.status, r.error, r.duration_seconds, r.width, r.height
