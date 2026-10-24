@@ -602,7 +602,7 @@ export default function Camera({ shoot, planned: initialPlan, health, onClose })
   const script = planned?.script;
 
   return (
-    <div className="camera">
+    <div className={`camera ${take ? 'reviewing' : ''}`}>
       <div className="stage" style={{ '--aspect': aspect }}>
         <video
           ref={videoRef}

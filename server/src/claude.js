@@ -100,7 +100,7 @@ async function researchTrends(niche, language) {
           {
             type: 'web_search_20260209',
             name: 'web_search',
-            max_uses: 4,
+            max_uses: 2,
             user_location: { type: 'approximate', country: 'IN', timezone: 'Asia/Kolkata' },
           },
         ],
@@ -192,6 +192,8 @@ For each shot:
 background: one specific, achievable suggestion for this niche and script using what an Indian home or street usually has (a plain wall, a bookshelf, a kitchen counter, a balcony with plants), plus a few things to avoid.
 lighting: one specific suggestion for this script (for example "sit facing a window in the morning", "use a warm lamp beside the phone, not behind you"), plus a few things to avoid.
 
+The lines, read in order, must form one complete script: hook first, then the content, and the last shot ends with a short call to action (follow, comment or save).
+
 Keep the creator's idea exactly as they gave it; don't swap it for a different topic. Use the trend notes only where they genuinely fit.`;
 
 export async function writeScript({ creator, idea, format, language }) {
@@ -199,7 +201,13 @@ export async function writeScript({ creator, idea, format, language }) {
   const lang = SCRIPT_RULES[language] ? language : 'Hinglish';
 
   try {
-    const trends = await researchTrends(creator.niche, lang);
+    // Don't make the creator wait on trend research: use it if it's ready within a
+    // few seconds (usually cached from the home screen's trend cards), otherwise
+    // write without it while the research finishes in the background.
+    const trends = await Promise.race([
+      researchTrends(creator.niche, lang),
+      new Promise((resolve) => setTimeout(() => resolve(''), 6000)),
+    ]);
     const brief = [
       `Creator's niche: ${creator.niche}`,
       `Creator's first name: ${creator.name.split(/\s+/)[0]}`,
@@ -213,7 +221,7 @@ export async function writeScript({ creator, idea, format, language }) {
     const message = await client.beta.messages.create({
       model: MODEL,
       max_tokens: 8000,
-      output_config: { effort: 'medium', format: { type: 'json_schema', schema: scriptSchema } },
+      output_config: { effort: 'low', format: { type: 'json_schema', schema: scriptSchema } },
       system: SCRIPT_SYSTEM,
       messages: [{ role: 'user', content: brief }],
       ...FALLBACK,

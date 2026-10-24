@@ -145,12 +145,6 @@ app.post('/api/script', requireUser, limits.script, async (req, res, next) => {
     };
     const { script, messageId } = await writeScript({ creator: req.user, ...brief });
     // The AgenticOrg director reviews every script; its notes show before shooting.
-    if (directorConfigured) {
-      script.director_notes = await reviewScript({ creator: req.user, script, language: script.language }).catch((err) => {
-        console.error('AgenticOrg script review failed:', err.message);
-        return [];
-      });
-    }
     let planId = null;
     if (pool) {
       const { rows } = await pool.query(
@@ -170,6 +164,22 @@ const FRAME_CHECK_GAP_MS = 4000;
 const lastFrameCheck = new Map();
 
 // Save the creator's edits to a script before shooting.
+// The AgenticOrg director reviews a script; asked separately so the script shows at once.
+app.post('/api/plans/:id/review', requireUser, limits.script, async (req, res, next) => {
+  if (!directorConfigured) return res.json({ notes: [] });
+  try {
+    const plan = await loadPlan(req.params.id, req.user.id);
+    if (!plan) return res.status(404).json({ error: 'Script not found' });
+    const notes = await reviewScript({ creator: req.user, script: plan, language: plan.language }).catch((err) => {
+      console.error('AgenticOrg script review failed:', err.message);
+      return [];
+    });
+    res.json({ notes });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.put('/api/plans/:id', requireUser, async (req, res, next) => {
   const shots = req.body?.script?.shots;
   if (!pool) return res.status(503).json({ error: 'Saving scripts needs a database' });
