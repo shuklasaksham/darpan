@@ -29,8 +29,44 @@ needs HTTPS outside localhost, so test recording on the deployed site.
 | `ANTHROPIC_API_KEY` | Claude API |
 | `DEEPGRAM_API_KEY` | Deepgram speech-to-text |
 | `SARVAM_API_KEY` | Sarvam AI (Indian languages) |
+| `AGENTICORG_API_KEY` | AgenticOrg workspace API key (`ao_sk_...`); needs access to run the director agent |
+| `AGENTICORG_DIRECTOR_AGENT_ID` | UUID of the director agent in AgenticOrg |
+| `AGENTICORG_BASE_URL` | Optional; defaults to `https://app.agenticorg.ai` |
 | `UPLOAD_DIR` | Optional; where uploads are written (default: OS temp dir) |
 | `MAX_UPLOAD_MB` | Optional; upload size cap (default 200) |
+
+## AI director (AgenticOrg)
+
+The director that plans shoots, recommends shots and reviews takes is an agent
+in your [AgenticOrg](https://agenticorg.ai) workspace. The server calls it with
+the `agenticorg-sdk` package (`server/src/director.js`), running the agent by
+ID with one of three actions. Each call also sends the expected JSON shape in
+`context.output_format`.
+
+| Action | When | Expected output |
+| --- | --- | --- |
+| `plan_shoot` | Creator submits a reel idea | `{ title, hook, shots: [{ title, framing, duration_seconds, say, tips }], caption, hashtags }` |
+| `recommend_shot` | "What should I shoot next?" | `{ shot: {...}, why }` |
+| `review_take` | A take is uploaded for a planned shot | `{ verdict: "keep" | "retake", praise, fixes, next_step }` |
+
+To set it up:
+
+1. In AgenticOrg, create an agent (for example with **Generate agent**) using
+   the brief below, and note its agent ID.
+2. Under **Settings → API Keys**, create a key that can run that agent.
+3. Set `AGENTICORG_API_KEY` and `AGENTICORG_DIRECTOR_AGENT_ID`.
+
+> You are Darpan's AI director for first-time Indian creators shooting vertical
+> reels on a phone. Reply only with JSON in the shape given in
+> `context.output_format`. For `plan_shoot`, turn the idea into a short shot
+> list with a strong 1–3 second hook, simple phone-friendly framing, and lines
+> to say in the requested language. For `recommend_shot`, suggest the single
+> best next shot given the plan and shots already done. For `review_take`,
+> compare the take's duration and orientation with the planned shot and give
+> warm, specific, encouraging feedback.
+
+Without these two variables the app still runs: it shows a plain "Record a
+take" button and `/api/health` reports `director: false`.
 
 ## Uploads
 

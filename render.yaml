@@ -15,6 +15,10 @@ services:
         sync: false
       - key: SARVAM_API_KEY
         sync: false
+      - key: AGENTICORG_API_KEY
+        sync: false
+      - key: AGENTICORG_DIRECTOR_AGENT_ID
+        sync: false
 
 databases:
   - name: darpan-db

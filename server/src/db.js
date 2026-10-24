@@ -22,6 +22,16 @@ export async function migrate() {
       duration_seconds REAL,
       width INT,
       height INT
-    )
+    );
+    CREATE TABLE IF NOT EXISTS shoot_plans (
+      id BIGSERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      brief JSONB NOT NULL,
+      plan JSONB NOT NULL,
+      agent_run_id TEXT
+    );
+    ALTER TABLE takes ADD COLUMN IF NOT EXISTS plan_id BIGINT REFERENCES shoot_plans(id);
+    ALTER TABLE takes ADD COLUMN IF NOT EXISTS shot_index INT;
+    ALTER TABLE takes ADD COLUMN IF NOT EXISTS review JSONB;
   `);
 }

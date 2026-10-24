@@ -7,6 +7,9 @@ export const config = {
   anthropicApiKey: process.env.ANTHROPIC_API_KEY,
   deepgramApiKey: process.env.DEEPGRAM_API_KEY,
   sarvamApiKey: process.env.SARVAM_API_KEY,
+  agenticorgApiKey: process.env.AGENTICORG_API_KEY,
+  agenticorgDirectorAgentId: process.env.AGENTICORG_DIRECTOR_AGENT_ID,
+  agenticorgBaseUrl: process.env.AGENTICORG_BASE_URL || 'https://app.agenticorg.ai',
   // Uploads are streamed to disk, never buffered in memory (the server has 512 MB).
   uploadDir: process.env.UPLOAD_DIR || path.join(os.tmpdir(), 'darpan-uploads'),
   maxUploadBytes: Number(process.env.MAX_UPLOAD_MB || 200) * 1024 * 1024,
