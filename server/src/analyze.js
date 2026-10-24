@@ -40,6 +40,19 @@ const FILLER_WORDS = new Set(['um', 'umm', 'ummm', 'uh', 'uhh', 'uhm', 'hmm', 'e
 const FILLER_PHRASES = [['you', 'know'], ['i', 'mean'], ['kya', 'bolte'], ['kya', 'kehte']];
 
 const clean = (w) => w.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+
+/** Filler words and phrases in a transcript: [{ text, indices }]. */
+export function findFillers(words) {
+  const tokens = words.map((w) => clean(w.word));
+  const found = [];
+  tokens.forEach((t, i) => {
+    if (FILLER_WORDS.has(t)) found.push({ text: t, indices: [i] });
+    for (const [a, b] of FILLER_PHRASES) {
+      if (t === a && tokens[i + 1] === b) found.push({ text: `${a} ${b}`, indices: [i, i + 1] });
+    }
+  });
+  return found;
+}
 const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
 const std = (xs) => {
   const m = mean(xs);
@@ -95,12 +108,7 @@ export function analyzeTake({ words, duration, loudness = [], gaze = [], planned
     f.lastWordEnd = last.end;
     if (duration - last.end < CUT_OFF_S) issues.cut_off_ending = { lastWord: last.text };
 
-    const tokens = words.map((w) => clean(w.word));
-    const fillers = [];
-    tokens.forEach((t, i) => {
-      if (FILLER_WORDS.has(t)) fillers.push(t);
-      for (const [a, b] of FILLER_PHRASES) if (t === a && tokens[i + 1] === b) fillers.push(`${a} ${b}`);
-    });
+    const fillers = findFillers(words).map((x) => x.text);
     f.fillers = fillers;
     if (fillers.length >= 2) issues.fillers = { count: fillers.length, kinds: [...new Set(fillers)] };
   }

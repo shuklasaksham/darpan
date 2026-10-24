@@ -7,6 +7,7 @@ import { config } from './config.js';
 import { pool, migrate } from './db.js';
 import { extractAudio, probe, ffmpegAvailable } from './ffmpeg.js';
 import { analyzeTake, ruleNotes } from './analyze.js';
+import { enqueueReel, jobStatus, sweepOldFiles, takesDir } from './reels.js';
 import { authRouter, loadUser, requireUser } from './auth.js';
 import { transcribeFile, transcribeWithWords, TranscribeError } from './transcribe.js';
 import { directorConfigured, DirectorError, suggestIdeas } from './director.js';
@@ -172,6 +173,7 @@ function jpegFrames(text) {
 app.post('/api/takes', requireUser, videoUpload.single('video'), async (req, res, next) => {
   if (!req.file) return res.status(400).json({ error: 'Send a video in the "video" field' });
   const audioPath = `${req.file.path}.wav`;
+  let stored = false;
   try {
     const meta = await probe(req.file.path).catch(() => null);
     if (!meta) return res.status(422).json({ error: "Couldn't read that file as a video" });
@@ -224,8 +226,8 @@ app.post('/api/takes', requireUser, videoUpload.single('video'), async (req, res
     if (pool) {
       const { rows } = await pool.query(
         `INSERT INTO takes (user_id, original_name, size_bytes, duration_seconds, width, height, plan_id, shot_index,
-                            transcript, score, notes, features, notes_source)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
+                            transcript, score, notes, features, notes_source, words, has_audio)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id`,
         [
           req.user.id,
           req.file.originalname,
@@ -240,9 +242,16 @@ app.post('/api/takes', requireUser, videoUpload.single('video'), async (req, res
           JSON.stringify(director.notes),
           analysis.features,
           director.source,
+          words ? JSON.stringify(words) : null,
+          meta.hasAudio,
         ],
       );
       id = rows[0].id;
+      // Keep the file for the reel (deleted after a day, or when another take of the shot is kept).
+      const filePath = path.join(takesDir, `${id}${path.extname(req.file.path) || '.webm'}`);
+      await fs.promises.rename(req.file.path, filePath);
+      await pool.query('UPDATE takes SET file_path = $2 WHERE id = $1', [id, filePath]);
+      stored = true;
     }
     res.json({
       id,
@@ -259,9 +268,123 @@ app.post('/api/takes', requireUser, videoUpload.single('video'), async (req, res
   } catch (err) {
     next(err);
   } finally {
-    // Render's disk is ephemeral; nothing is kept past the request for now.
-    fs.promises.rm(req.file.path, { force: true });
+    if (!stored) fs.promises.rm(req.file.path, { force: true });
     fs.promises.rm(audioPath, { force: true });
+  }
+});
+
+async function ownTake(id, userId) {
+  if (!pool) return null;
+  const { rows } = await pool.query('SELECT * FROM takes WHERE id = $1 AND user_id = $2', [id, userId]);
+  return rows[0] ?? null;
+}
+
+const fileExists = (p) => (p ? fs.promises.access(p).then(() => true, () => false) : Promise.resolve(false));
+
+// "Keep" a take: it becomes the shot's take for the reel, and the shot's other
+// takes' files are deleted.
+app.post('/api/takes/:id/keep', requireUser, async (req, res, next) => {
+  try {
+    const take = await ownTake(req.params.id, req.user.id);
+    if (!take) return res.status(404).json({ error: 'Take not found' });
+    const { rows: others } = await pool.query(
+      `WITH others AS (
+         SELECT id, file_path FROM takes
+         WHERE user_id = $1 AND plan_id IS NOT DISTINCT FROM $2 AND shot_index IS NOT DISTINCT FROM $3 AND id <> $4
+         FOR UPDATE
+       )
+       UPDATE takes SET kept = false, file_path = NULL
+       FROM others WHERE takes.id = others.id
+       RETURNING others.file_path AS old_path`,
+      [req.user.id, take.plan_id, take.shot_index, take.id],
+    );
+    await pool.query('UPDATE takes SET kept = true WHERE id = $1', [take.id]);
+    await Promise.all(others.filter((o) => o.old_path).map((o) => fs.promises.rm(o.old_path, { force: true })));
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Re-upload a kept take whose file is gone (Render's disk is wiped on restart).
+app.put('/api/takes/:id/file', requireUser, videoUpload.single('video'), async (req, res, next) => {
+  if (!req.file) return res.status(400).json({ error: 'Send the video in the "video" field' });
+  let stored = false;
+  try {
+    const take = await ownTake(req.params.id, req.user.id);
+    if (!take) return res.status(404).json({ error: 'Take not found' });
+    const filePath = path.join(takesDir, `${take.id}${path.extname(req.file.path) || '.webm'}`);
+    await fs.promises.rename(req.file.path, filePath);
+    stored = true;
+    await pool.query('UPDATE takes SET file_path = $2 WHERE id = $1', [take.id, filePath]);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  } finally {
+    if (!stored) fs.promises.rm(req.file.path, { force: true });
+  }
+});
+
+app.post('/api/reels', requireUser, async (req, res, next) => {
+  if (!pool) return res.status(503).json({ error: 'Reels need a database' });
+  const takeIds = Array.isArray(req.body?.takeIds) ? req.body.takeIds.map(Number).filter(Number.isInteger) : [];
+  if (takeIds.length === 0 || takeIds.length > 6) return res.status(400).json({ error: 'Send 1 to 6 take ids in shot order' });
+  try {
+    const { rows } = await pool.query('SELECT * FROM takes WHERE user_id = $1 AND id = ANY($2)', [req.user.id, takeIds]);
+    const byId = new Map(rows.map((t) => [Number(t.id), t]));
+    const takes = takeIds.map((id) => byId.get(id));
+    if (takes.some((t) => !t)) return res.status(404).json({ error: 'Some takes were not found' });
+    const missing = [];
+    for (const t of takes) if (!(await fileExists(t.file_path))) missing.push(Number(t.id));
+    // The phone still has these; it re-uploads them and asks again.
+    if (missing.length) return res.status(409).json({ error: 'Some takes need re-uploading', missing });
+
+    const { rows: [reel] } = await pool.query(
+      'INSERT INTO reels (user_id, plan_id, take_ids, captions) VALUES ($1, $2, $3, $4) RETURNING *',
+      [req.user.id, takes[0].plan_id, takeIds, req.body.captions !== false],
+    );
+    enqueueReel({ ...reel, takes });
+    res.status(202).json({ reelId: reel.id });
+  } catch (err) {
+    next(err);
+  }
+});
+
+async function ownReel(id, userId) {
+  if (!pool) return null;
+  const { rows } = await pool.query('SELECT * FROM reels WHERE id = $1 AND user_id = $2', [id, userId]);
+  return rows[0] ?? null;
+}
+
+app.get('/api/reels/:id', requireUser, async (req, res, next) => {
+  try {
+    const reel = await ownReel(req.params.id, req.user.id);
+    if (!reel) return res.status(404).json({ error: 'Reel not found' });
+    const job = jobStatus(reel.id);
+    res.json({
+      status: job?.status === 'working' ? 'working' : reel.status === 'queued' && !job ? 'error' : reel.status,
+      progress: reel.status === 'done' ? 1 : (job?.progress ?? 0),
+      stage: job?.stage ?? null,
+      error: reel.error ?? (reel.status === 'queued' && !job ? 'The server restarted. Try again.' : null),
+      width: reel.width,
+      height: reel.height,
+      durationSeconds: reel.duration_seconds,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/reels/:id/file', requireUser, async (req, res, next) => {
+  try {
+    const reel = await ownReel(req.params.id, req.user.id);
+    if (!reel || reel.status !== 'done' || !(await fileExists(reel.file_path))) {
+      return res.status(404).json({ error: 'Reel not available' });
+    }
+    if (req.query.download) res.attachment(`darpan-reel-${reel.id}.mp4`);
+    res.sendFile(reel.file_path, { headers: { 'Content-Type': 'video/mp4', 'Cache-Control': 'private, no-store' } });
+  } catch (err) {
+    next(err);
   }
 });
 
@@ -291,4 +414,6 @@ app.use((err, _req, res, _next) => {
 });
 
 await migrate();
+sweepOldFiles().catch(() => {});
+setInterval(() => sweepOldFiles().catch(() => {}), 60 * 60 * 1000).unref();
 app.listen(config.port, () => console.log(`Darpan listening on :${config.port}`));

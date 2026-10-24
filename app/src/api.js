@@ -31,6 +31,15 @@ export const logOut = () => postJson('/api/auth/logout', {});
 export const getIdeas = (language) => request(`/api/director/ideas?language=${encodeURIComponent(language)}`);
 export const writeScript = (brief) => postJson('/api/script', brief);
 export const checkFrame = (body) => postJson('/api/frame-check', body);
+export const keepTake = (id) => postJson(`/api/takes/${id}/keep`, {});
+export const makeReel = (body) => postJson('/api/reels', body);
+export const getReel = (id) => request(`/api/reels/${id}`);
+
+export function reuploadTake(id, blob) {
+  const body = new FormData();
+  body.append('video', blob, blob.name ?? `take.${extensionFor(blob.type)}`);
+  return request(`/api/takes/${id}/file`, { method: 'PUT', body });
+}
 
 export function transcribe(blob, language) {
   const body = new FormData();

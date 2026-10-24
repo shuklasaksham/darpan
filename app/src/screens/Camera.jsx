@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { checkFrame, writeScript, uploadTake } from '../api.js';
+import { checkFrame, keepTake, writeScript, uploadTake } from '../api.js';
+import Reel from './Reel.jsx';
 import { pickMimeType, stopStream } from '../media.js';
 import { Silhouette } from '../camera/silhouette.jsx';
 import { framingFor, headRegion, targetsFor } from '../camera/framing.js';
@@ -75,6 +76,12 @@ export default function Camera({ shoot, health, onClose }) {
   const [seconds, setSeconds] = useState(0);
   const [take, setTake] = useState(null); // { status, url, result?, error? }
   const [countdown, setCountdown] = useState(0);
+  const [kept, setKept] = useState({}); // shotIndex -> { takeId, blob, url, result }
+  const [reelOpen, setReelOpen] = useState(false);
+  const keptRef = useRef(kept);
+  keptRef.current = kept;
+  // Kept takes live in memory as blobs until the camera closes.
+  useEffect(() => () => Object.values(keptRef.current).forEach((k) => URL.revokeObjectURL(k.url)), []);
 
   const [planned, setPlanned] = useState(null); // { planId, script }
   const [scriptState, setScriptState] = useState('loading'); // loading | ready | error
@@ -533,7 +540,7 @@ export default function Camera({ shoot, health, onClose }) {
 
   async function send(blob, durationSeconds, stats) {
     const url = URL.createObjectURL(blob);
-    setTake({ status: 'uploading', url });
+    setTake({ status: 'uploading', url, blob });
     try {
       const result = await uploadTake(blob, {
         planId: planned?.planId,
@@ -546,14 +553,14 @@ export default function Camera({ shoot, health, onClose }) {
         frames: pickFrames(stats?.frames ?? []),
       });
       if (closedRef.current) return;
-      setTake({ status: 'done', url, result });
+      setTake({ status: 'done', url, blob, result });
       // Darpan reads the top note aloud.
       const top = result.notes?.[0];
       if (top && !live.current.muted) {
         speakerRef.current?.say(top.note_spoken || top.note, language === 'English' ? 'en-IN' : 'hi-IN');
       }
     } catch (err) {
-      setTake({ status: 'error', url, error: err.message });
+      setTake({ status: 'error', url, blob, error: err.message });
     }
   }
 
@@ -563,11 +570,24 @@ export default function Camera({ shoot, health, onClose }) {
     setTake(null);
   }
 
+  // Keep this take for the shot, then go straight to the next shot that still
+  // needs one; when every shot has a kept take, open the reel screen.
   function keepAndNext() {
-    closeTake();
-    if (shotIndex < shots.length - 1) setShotIndex((i) => i + 1);
-    else onClose();
+    speakerRef.current?.stop();
+    const result = take?.result;
+    if (result?.id) keepTake(result.id).catch(() => {});
+    const previous = kept[shotIndex];
+    if (previous && previous.url !== take.url) URL.revokeObjectURL(previous.url);
+    const next = { ...kept, [shotIndex]: { takeId: Number(result?.id), blob: take.blob, url: take.url, result } };
+    setKept(next);
+    setTake(null);
+    const remaining = shots.map((_, i) => i).filter((i) => !next[i]);
+    if (remaining.length === 0) setReelOpen(true);
+    else setShotIndex(remaining.find((i) => i > shotIndex) ?? remaining[0]);
   }
+
+  const allKept = shots.length > 0 && shots.every((_, i) => kept[i]?.takeId);
+  const keepFinishes = shots.every((_, i) => i === shotIndex || kept[i]);
 
   function onPickFile(e) {
     const file = e.target.files?.[0];
@@ -603,6 +623,7 @@ export default function Camera({ shoot, health, onClose }) {
             <button className="icon" onClick={() => setShotIndex((i) => i - 1)} disabled={shotIndex === 0 || recording} aria-label="Previous shot">‹</button>
             <span>
               {shotIndex + 1}/{shots.length}
+              {kept[shotIndex] ? ' ✓' : ''}
             </span>
             <button className="icon" onClick={() => setShotIndex((i) => i + 1)} disabled={shotIndex === shots.length - 1 || recording} aria-label="Next shot">›</button>
           </div>
@@ -682,7 +703,7 @@ export default function Camera({ shoot, health, onClose }) {
       )}
 
       {take && (
-        <TakeReview take={take} isLast={shotIndex >= shots.length - 1} onRetake={closeTake} onKeep={keepAndNext} />
+        <TakeReview take={take} isLast={keepFinishes} onRetake={closeTake} onKeep={keepAndNext} />
       )}
 
       <div className="camera-bottom">
@@ -696,11 +717,17 @@ export default function Camera({ shoot, health, onClose }) {
           </div>
         ) : (
           <>
-            <span className="timer">{recording ? formatTime(seconds) : framingFor(framing).label}</span>
+            {allKept && !recording && !countdown ? (
+              <button className="pill-button" onClick={() => setReelOpen(true)}>
+                Your reel
+              </button>
+            ) : (
+              <span className="timer">{recording ? formatTime(seconds) : framingFor(framing).label}</span>
+            )}
             <button
               className={`shutter ${recording ? 'recording' : ''}`}
               onClick={recording ? stopRecording : countdown ? () => setCountdown(0) : startCountdown}
-              disabled={!videoReady || Boolean(take) || showScript || scriptState !== 'ready'}
+              disabled={!videoReady || Boolean(take) || showScript || reelOpen || scriptState !== 'ready'}
               aria-label={recording ? 'Stop recording' : countdown ? 'Cancel countdown' : 'Start recording'}
             />
             <button
@@ -714,6 +741,10 @@ export default function Camera({ shoot, health, onClose }) {
           </>
         )}
       </div>
+
+      {reelOpen && allKept && (
+        <Reel shots={shots} kept={kept} onBack={() => setReelOpen(false)} onDone={onClose} />
+      )}
 
       {debug && debugInfo && <DebugPanel info={debugInfo} claude={claude} visionState={visionState} />}
     </div>

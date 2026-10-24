@@ -57,6 +57,24 @@ export async function migrate() {
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS notes JSONB;
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS features JSONB;
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS notes_source TEXT;
+    ALTER TABLE takes ADD COLUMN IF NOT EXISTS words JSONB;
+    ALTER TABLE takes ADD COLUMN IF NOT EXISTS has_audio BOOLEAN;
+    ALTER TABLE takes ADD COLUMN IF NOT EXISTS file_path TEXT;
+    ALTER TABLE takes ADD COLUMN IF NOT EXISTS kept BOOLEAN NOT NULL DEFAULT false;
+    CREATE TABLE IF NOT EXISTS reels (
+      id BIGSERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      plan_id BIGINT REFERENCES shoot_plans(id),
+      take_ids BIGINT[] NOT NULL,
+      captions BOOLEAN NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      error TEXT,
+      file_path TEXT,
+      width INT,
+      height INT,
+      duration_seconds REAL
+    );
     DELETE FROM sessions WHERE expires_at < now();
   `);
 }

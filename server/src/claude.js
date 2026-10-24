@@ -397,3 +397,48 @@ export async function directorNotes({ shot, transcript, words, analysis, frames,
     throw wrapApiError(err);
   }
 }
+
+// --- Hinglish captions -----------------------------------------------------
+
+const captionSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['takes'],
+  properties: {
+    takes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['words'],
+        properties: { words: { type: 'array', items: { type: 'string' } } },
+      },
+    },
+  },
+};
+
+/**
+ * Roman-script Hinglish spellings for transcript words, one output word per
+ * input word, so caption timing stays exact. Returns an array per take (null
+ * where Claude's answer didn't line up, so the caller can fall back).
+ */
+export async function hinglishCaptions(takes) {
+  if (!client) throw new ClaudeError('Captions are not set up', 503);
+  try {
+    const message = await client.beta.messages.create({
+      model: MODEL,
+      max_tokens: 8000,
+      output_config: { effort: 'low', format: { type: 'json_schema', schema: captionSchema } },
+      system: `You write on-screen captions for Indian Reels in Hinglish: Hindi and English in Roman script, spelled the way young Indians type ("main", "nahi", "bahut", "kya", "hai"). For each take you get its words in order; return exactly one caption word for each input word, in the same order. Convert Devanagari to Roman Hinglish, keep English words as they are, keep numbers and the punctuation attached to a word. Never merge, split, drop or add words.`,
+      messages: [{ role: 'user', content: JSON.stringify({ takes: takes.map((words) => ({ words })) }) }],
+      ...FALLBACK,
+    });
+    const result = parseJsonResponse(message);
+    return takes.map((words, i) => {
+      const out = result.takes?.[i]?.words;
+      return Array.isArray(out) && out.length === words.length ? out : null;
+    });
+  } catch (err) {
+    throw wrapApiError(err);
+  }
+}

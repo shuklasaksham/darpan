@@ -34,7 +34,7 @@ const VISARGA = 'ः';
  * Transliterates one Devanagari word, dropping the inherent "a" where Hindi
  * speakers drop it (कमला → kamla, संजय → sanjay, अर्जुन → arjun).
  */
-function transliterateWord(word) {
+export function transliterateWord(word) {
   const chars = [...word];
   // Each syllable: { onset: consonant cluster, vowel, inherent: bool, coda: string }
   const syllables = [];
