@@ -1,7 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from './config.js';
 
-const MODEL = 'claude-opus-5-5';
+const MODEL = process.env.CLAUDE_MODEL || 'claude-opus-5-5';
+// Tried if the main model is unavailable to this API key.
+const BACKUP_MODEL = process.env.CLAUDE_BACKUP_MODEL || 'claude-sonnet-5-5';
 // If a safety classifier declines, the API re-runs the request on its recommended fallback model.
 const FALLBACK = { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' };
 
@@ -10,6 +12,39 @@ const client = config.anthropicApiKey
   : null;
 
 export const claudeConfigured = Boolean(client);
+
+const isRequestProblem = (err) =>
+  err instanceof Anthropic.BadRequestError || err instanceof Anthropic.NotFoundError || err instanceof Anthropic.PermissionDeniedError;
+
+/**
+ * Calls Claude, stepping down when a request is rejected rather than failing:
+ * 1. with the server-side refusal fallback (beta),
+ * 2. without beta options,
+ * 3. on the backup model,
+ * 4. without structured output (JSON is then read from the text).
+ */
+async function create(params) {
+  const attempts = [
+    () => client.beta.messages.create({ ...params, ...FALLBACK }),
+    () => client.messages.create(params),
+    () => client.messages.create({ ...params, model: BACKUP_MODEL }),
+    () => {
+      const { format, ...rest } = params.output_config ?? {};
+      return client.messages.create({ ...params, model: BACKUP_MODEL, output_config: rest });
+    },
+  ];
+  let lastError;
+  for (const [i, attempt] of attempts.entries()) {
+    try {
+      return await attempt();
+    } catch (err) {
+      lastError = err;
+      if (!isRequestProblem(err)) throw err;
+      console.error(`Claude attempt ${i + 1} rejected (${err.status}): ${err.message}`);
+    }
+  }
+  throw lastError;
+}
 
 export class ClaudeError extends Error {
   constructor(message, status = 502) {
@@ -49,9 +84,15 @@ const SCRIPT_RULES = {
 function parseJsonResponse(message) {
   if (message.stop_reason === 'refusal') throw new ClaudeError('Claude declined this request', 422);
   if (message.stop_reason === 'max_tokens') throw new ClaudeError('Claude ran out of room. Try a shorter idea.');
-  const text = message.content.find((block) => block.type === 'text')?.text;
+  const text = message.content.filter((block) => block.type === 'text').map((b) => b.text).join('');
   try {
     return JSON.parse(text);
+  } catch {}
+  // Without structured output the JSON may come wrapped in prose or a code fence.
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  try {
+    return JSON.parse(text.slice(start, end + 1));
   } catch {
     throw new ClaudeError('Claude returned something unexpected. Try again.');
   }
@@ -60,6 +101,10 @@ function parseJsonResponse(message) {
 function wrapApiError(err) {
   if (err instanceof ClaudeError) return err;
   if (err instanceof Anthropic.RateLimitError) return new ClaudeError('Darpan is busy. Try again in a minute.', 503);
+  if (err instanceof Anthropic.AuthenticationError) {
+    console.error('Claude API error 401: ANTHROPIC_API_KEY is missing or invalid');
+    return new ClaudeError('The script writer is unavailable right now.');
+  }
   if (err instanceof Anthropic.APIError) {
     console.error(`Claude API error ${err.status}:`, err.message);
     return new ClaudeError('The script writer is unavailable right now.');
@@ -92,7 +137,7 @@ async function researchTrends(niche, language) {
   try {
     // A long server-side search can pause; resume it a couple of times.
     for (let attempt = 0; attempt < 3; attempt++) {
-      const message = await client.beta.messages.create({
+      const message = await create({
         model: MODEL,
         max_tokens: 4000,
         output_config: { effort: 'low' },
@@ -105,7 +150,6 @@ async function researchTrends(niche, language) {
           },
         ],
         messages,
-        ...FALLBACK,
       });
       if (message.stop_reason === 'pause_turn') {
         messages.push({ role: 'assistant', content: message.content });
@@ -218,13 +262,12 @@ export async function writeScript({ creator, idea, format, language }) {
       trends ? `What's trending in this niche right now:\n${trends}` : 'No trend notes available.',
     ].join('\n\n');
 
-    const message = await client.beta.messages.create({
+    const message = await create({
       model: MODEL,
       max_tokens: 8000,
       output_config: { effort: 'low', format: { type: 'json_schema', schema: scriptSchema } },
       system: SCRIPT_SYSTEM,
       messages: [{ role: 'user', content: brief }],
-      ...FALLBACK,
     });
     const script = parseJsonResponse(message);
     script.shots = (script.shots ?? []).slice(0, 6);
@@ -274,7 +317,7 @@ export async function checkFrame({ imageBase64, shot, script, metrics, language 
   if (!client) throw new ClaudeError('Frame checks are not set up yet', 503);
   const lang = SPOKEN_RULES[language] ? language : 'Hinglish';
   try {
-    const message = await client.beta.messages.create({
+    const message = await create({
       model: MODEL,
       max_tokens: 2000,
       output_config: { effort: 'low', format: { type: 'json_schema', schema: frameSchema } },
@@ -303,7 +346,6 @@ Be encouraging and practical. ${SPOKEN_RULES[lang]}`,
           ],
         },
       ],
-      ...FALLBACK,
     });
     return parseJsonResponse(message);
   } catch (err) {
@@ -368,7 +410,7 @@ export async function directorNotes({ shot, transcript, words, analysis, frames,
   const lang = SPOKEN_RULES[language] ? language : 'Hinglish';
   const timed = words.map((w) => `${w.start.toFixed(2)} ${w.text}`).join(' | ');
   try {
-    const message = await client.beta.messages.create({
+    const message = await create({
       model: MODEL,
       max_tokens: 4000,
       output_config: { effort: 'low', format: { type: 'json_schema', schema: takeSchema } },
@@ -395,7 +437,6 @@ export async function directorNotes({ shot, transcript, words, analysis, frames,
           ],
         },
       ],
-      ...FALLBACK,
     });
     const result = parseJsonResponse(message);
     result.notes = (result.notes ?? []).slice(0, 3);
@@ -433,13 +474,12 @@ const captionSchema = {
 export async function hinglishCaptions(takes) {
   if (!client) throw new ClaudeError('Captions are not set up', 503);
   try {
-    const message = await client.beta.messages.create({
+    const message = await create({
       model: MODEL,
       max_tokens: 8000,
       output_config: { effort: 'low', format: { type: 'json_schema', schema: captionSchema } },
       system: `You write on-screen captions for Indian Reels in Hinglish: Hindi and English in Roman script, spelled the way young Indians type ("main", "nahi", "bahut", "kya", "hai"). For each take you get its words in order; return exactly one caption word for each input word, in the same order. Convert Devanagari to Roman Hinglish, keep English words as they are, keep numbers and the punctuation attached to a word. Never merge, split, drop or add words.`,
       messages: [{ role: 'user', content: JSON.stringify({ takes: takes.map((words) => ({ words })) }) }],
-      ...FALLBACK,
     });
     const result = parseJsonResponse(message);
     return takes.map((words, i) => {
@@ -488,7 +528,7 @@ export async function trendCards({ niche, language }) {
   if (cached && Date.now() - cached.at < TREND_TTL_MS) return cached.cards;
   try {
     const notes = await researchTrends(niche, lang);
-    const message = await client.beta.messages.create({
+    const message = await create({
       model: MODEL,
       max_tokens: 3000,
       output_config: { effort: 'low', format: { type: 'json_schema', schema: cardsSchema } },
@@ -499,7 +539,6 @@ export async function trendCards({ niche, language }) {
           content: `Niche: ${niche}\n\n${notes ? `What's trending this week:\n${notes}` : 'No trend notes available; use what generally works for this niche in India.'}`,
         },
       ],
-      ...FALLBACK,
     });
     const cards = (parseJsonResponse(message).cards ?? []).slice(0, 6);
     cardCache.set(key, { cards, at: Date.now() });
