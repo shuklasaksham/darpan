@@ -68,8 +68,21 @@ export class Speaker {
     this.lastAt = 0;
     this.lastById = new Map();
     this.clips = new Map(); // text -> object URL
-    this.audio = null;
+    // One audio element for every clip: iOS only lets an element play without a
+    // tap once it has been started from a tap (see unlock).
+    this.audio = typeof Audio === 'undefined' ? null : new Audio();
+    if (this.audio) this.audio.setAttribute('playsinline', '');
     this.muted = false;
+  }
+
+  /** Call from a tap (e.g. "Start shooting") so later tips can play on iOS. */
+  unlock() {
+    if (this.unlocked || !this.audio) return;
+    this.unlocked = true;
+    // A tiny silent WAV.
+    this.audio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+    this.audio.play().catch(() => {});
+    if ('speechSynthesis' in window) speechSynthesis.speak(new SpeechSynthesisUtterance(''));
   }
 
   /** Speaks if nothing else is playing and this tip hasn't just been said. */
@@ -115,10 +128,11 @@ export class Speaker {
       this.clips.set(key, url);
     }
     await new Promise((resolve, reject) => {
-      this.audio = new Audio(url);
-      this.audio.onended = resolve;
-      this.audio.onerror = reject;
-      this.audio.play().catch(reject);
+      const audio = this.audio;
+      audio.onended = resolve;
+      audio.onerror = reject;
+      audio.src = url;
+      audio.play().catch(reject);
     });
   }
 

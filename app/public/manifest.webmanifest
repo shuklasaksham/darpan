@@ -1,0 +1,17 @@
+{
+  "name": "Darpan: your reel coach",
+  "short_name": "Darpan",
+  "description": "Scripts, live camera coaching and a finished reel for first-time creators.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fbf8f3",
+  "theme_color": "#fbf8f3",
+  "lang": "en-IN",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

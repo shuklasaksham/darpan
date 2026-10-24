@@ -13,9 +13,25 @@ export default function Auth({ onSignedIn }) {
   return (
     <main>
       <header>
-        <h1>Darpan</h1>
+        <h1 className="wordmark">Darpan</h1>
         <p className="tagline">Your reel coach, right in your pocket.</p>
       </header>
+      {mode === 'welcome' && (
+        <ol className="how">
+          <li>
+            <strong>A script that fits you</strong>
+            <span>Written for your niche and what's trending, in Hinglish, Hindi or English.</span>
+          </li>
+          <li>
+            <strong>A coach while you shoot</strong>
+            <span>Live tips on light, framing and your voice, said out loud.</span>
+          </li>
+          <li>
+            <strong>A finished reel</strong>
+            <span>Trimmed, captioned and ready to post.</span>
+          </li>
+        </ol>
+      )}
       {mode === 'welcome' && (
         <div className="stack">
           <button className="primary" onClick={() => setMode('signup')}>Create my account</button>

@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import express from 'express';
 import { pool } from './db.js';
 import { suggestUsernames, USERNAME_PATTERN } from './usernames.js';
+import { limits } from './limits.js';
 
 const scryptAsync = promisify(scrypt);
 
@@ -98,7 +99,7 @@ authRouter.use(requireDb);
 
 authRouter.get('/me', (req, res) => res.json({ user: req.user ?? null }));
 
-authRouter.post('/username-suggestions', async (req, res, next) => {
+authRouter.post('/username-suggestions', limits.usernames, async (req, res, next) => {
   const name = cleanText(req.body?.name, 60);
   if (!name) return res.status(400).json({ error: 'Tell us your name first' });
   try {
@@ -111,7 +112,7 @@ authRouter.post('/username-suggestions', async (req, res, next) => {
   }
 });
 
-authRouter.post('/signup', async (req, res, next) => {
+authRouter.post('/signup', limits.signup, async (req, res, next) => {
   const name = cleanText(req.body?.name, 60);
   const niche = cleanText(req.body?.niche, 200);
   const gender = req.body?.gender;
@@ -145,7 +146,7 @@ authRouter.post('/signup', async (req, res, next) => {
   }
 });
 
-authRouter.post('/login', async (req, res, next) => {
+authRouter.post('/login', limits.login, async (req, res, next) => {
   const username = cleanText(req.body?.username, 30).toLowerCase();
   const { pin } = req.body ?? {};
   const wrong = { error: 'Wrong username or PIN' };

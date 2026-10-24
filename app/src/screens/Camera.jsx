@@ -138,6 +138,24 @@ export default function Camera({ shoot, health, onClose }) {
 
   useEffect(requestScript, [shoot, health?.scripts]);
 
+  // Keep the screen awake while the camera is open (Android Chrome, iOS 16.4+).
+  useEffect(() => {
+    let lock = null;
+    let released = false;
+    const acquire = async () => {
+      try {
+        if (!released && document.visibilityState === 'visible') lock = await navigator.wakeLock?.request('screen');
+      } catch {}
+    };
+    acquire();
+    document.addEventListener('visibilitychange', acquire);
+    return () => {
+      released = true;
+      document.removeEventListener('visibilitychange', acquire);
+      lock?.release().catch(() => {});
+    };
+  }, []);
+
   // --- Camera ---------------------------------------------------------------
 
   useEffect(
@@ -473,6 +491,7 @@ export default function Camera({ shoot, health, onClose }) {
   }, [countdown]);
 
   function startCountdown() {
+    speakerRef.current?.unlock();
     speakerRef.current?.stop();
     setShowAspects(false);
     setTake(null);
@@ -694,7 +713,13 @@ export default function Camera({ shoot, health, onClose }) {
           </div>
         </div>
       )}
-      {showScript && script && <ScriptSheet script={script} onStart={() => setShowScript(false)} />}
+      {showScript && script && <ScriptSheet
+          script={script}
+          onStart={() => {
+            speakerRef.current?.unlock();
+            setShowScript(false);
+          }}
+        />}
 
       {countdown > 0 && (
         <div className="countdown" aria-live="assertive">

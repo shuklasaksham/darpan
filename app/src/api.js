@@ -29,6 +29,7 @@ export const logIn = (username, pin) => postJson('/api/auth/login', { username, 
 export const logOut = () => postJson('/api/auth/logout', {});
 
 export const getIdeas = (language) => request(`/api/director/ideas?language=${encodeURIComponent(language)}`);
+export const getTrends = (language) => request(`/api/trends?language=${encodeURIComponent(language)}`);
 export const writeScript = (brief) => postJson('/api/script', brief);
 export const checkFrame = (body) => postJson('/api/frame-check', body);
 export const keepTake = (id) => postJson(`/api/takes/${id}/keep`, {});

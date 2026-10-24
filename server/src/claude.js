@@ -442,3 +442,62 @@ export async function hinglishCaptions(takes) {
     throw wrapApiError(err);
   }
 }
+
+// --- Trend cards for the home screen ----------------------------------------
+
+const cardCache = new Map(); // niche|language -> { cards, at }
+
+const cardsSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['cards'],
+  properties: {
+    cards: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['title', 'why', 'format'],
+        properties: {
+          title: { type: 'string', description: 'A ready-to-shoot reel idea in under 8 words, in the requested language' },
+          why: { type: 'string', description: 'One short line on why it works right now' },
+          format: {
+            type: 'string',
+            enum: ['Talk to camera', 'Top 3 list', 'Day in my life', 'Quick how-to', 'Before → after', 'POV skit', 'Honest review', 'Storytime'],
+          },
+        },
+      },
+    },
+  },
+};
+
+/** 4-6 reel ideas riding what's trending in the creator's niche. */
+export async function trendCards({ niche, language }) {
+  if (!client) throw new ClaudeError('Trends are not set up', 503);
+  const lang = SCRIPT_RULES[language] ? language : 'Hinglish';
+  const key = `${niche.toLowerCase()}|${lang}`;
+  const cached = cardCache.get(key);
+  if (cached && Date.now() - cached.at < TREND_TTL_MS) return cached.cards;
+  try {
+    const notes = await researchTrends(niche, lang);
+    const message = await client.beta.messages.create({
+      model: MODEL,
+      max_tokens: 3000,
+      output_config: { effort: 'low', format: { type: 'json_schema', schema: cardsSchema } },
+      system: `You suggest reel ideas for a first-time Indian creator who films alone on a phone. Give 4 to 6 specific, doable ideas for their niche that ride what's trending now. ${SCRIPT_RULES[lang]}`,
+      messages: [
+        {
+          role: 'user',
+          content: `Niche: ${niche}\n\n${notes ? `What's trending this week:\n${notes}` : 'No trend notes available; use what generally works for this niche in India.'}`,
+        },
+      ],
+      ...FALLBACK,
+    });
+    const cards = (parseJsonResponse(message).cards ?? []).slice(0, 6);
+    cardCache.set(key, { cards, at: Date.now() });
+    if (cardCache.size > 200) cardCache.delete(cardCache.keys().next().value);
+    return cards;
+  } catch (err) {
+    throw wrapApiError(err);
+  }
+}

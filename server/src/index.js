@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import express from 'express';
+import compression from 'compression';
 import multer from 'multer';
 import { config } from './config.js';
 import { pool, migrate } from './db.js';
@@ -11,8 +12,9 @@ import { enqueueReel, jobStatus, sweepOldFiles, takesDir } from './reels.js';
 import { authRouter, loadUser, requireUser } from './auth.js';
 import { transcribeFile, transcribeWithWords, TranscribeError } from './transcribe.js';
 import { directorConfigured, DirectorError, suggestIdeas } from './director.js';
-import { checkFrame, ClaudeError, claudeConfigured, directorNotes, writeScript } from './claude.js';
+import { checkFrame, ClaudeError, claudeConfigured, directorNotes, trendCards, writeScript } from './claude.js';
 import { speak, TtsError, ttsConfigured } from './tts.js';
+import { limits } from './limits.js';
 
 fs.mkdirSync(config.uploadDir, { recursive: true });
 
@@ -26,6 +28,39 @@ const audioUpload = multer({ storage: diskStorage, limits: { fileSize: 15 * 1024
 
 const app = express();
 app.disable('x-powered-by');
+// Render terminates HTTPS in front of the app; trust it for req.ip and req.secure.
+app.set('trust proxy', 1);
+app.use(compression());
+
+// MediaPipe needs WebAssembly ('wasm-unsafe-eval') and blob: workers; recordings
+// and reels play from blob: URLs; React sets some inline styles.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval'",
+  "worker-src 'self' blob:",
+  "connect-src 'self' blob: data:",
+  "img-src 'self' blob: data:",
+  "media-src 'self' blob: data:",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self'",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join('; ');
+
+app.use((req, res, next) => {
+  res.set({
+    'Content-Security-Policy': CSP,
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(self), microphone=(self), screen-wake-lock=(self), geolocation=()',
+    'Cross-Origin-Opener-Policy': 'same-origin',
+  });
+  if (process.env.NODE_ENV === 'production') {
+    res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  next();
+});
 app.use(express.json({ limit: '1mb' }));
 app.use('/api', loadUser);
 
@@ -56,7 +91,7 @@ app.get('/api/health', async (_req, res) => {
 
 app.use('/api/auth', authRouter);
 
-app.post('/api/transcribe', requireUser, audioUpload.single('audio'), async (req, res, next) => {
+app.post('/api/transcribe', requireUser, limits.transcribe, audioUpload.single('audio'), async (req, res, next) => {
   if (!req.file) return res.status(400).json({ error: 'Send audio in the "audio" field' });
   try {
     const transcript = await transcribeFile(req.file.path, req.file.mimetype, req.body.language);
@@ -86,7 +121,15 @@ app.get('/api/director/ideas', requireUser, async (req, res, next) => {
   }
 });
 
-app.post('/api/script', requireUser, async (req, res, next) => {
+app.get('/api/trends', requireUser, limits.trends, async (req, res, next) => {
+  try {
+    res.json({ cards: await trendCards({ niche: req.user.niche, language: req.query.language }) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/script', requireUser, limits.script, async (req, res, next) => {
   const { idea, format, language } = req.body ?? {};
   const cleanIdea = typeof idea === 'string' ? idea.trim() : '';
   if (cleanIdea.length > 1000) return res.status(400).json({ error: 'Keep your idea under 1000 characters' });
@@ -116,7 +159,7 @@ app.post('/api/script', requireUser, async (req, res, next) => {
 const FRAME_CHECK_GAP_MS = 4000;
 const lastFrameCheck = new Map();
 
-app.post('/api/frame-check', requireUser, async (req, res, next) => {
+app.post('/api/frame-check', requireUser, limits.frameCheck, async (req, res, next) => {
   const { image, planId, shotIndex, metrics, language } = req.body ?? {};
   const imageBase64 = typeof image === 'string' ? image.replace(/^data:image\/jpeg;base64,/, '') : '';
   if (!imageBase64 || imageBase64.length > 700_000) {
@@ -136,7 +179,7 @@ app.post('/api/frame-check', requireUser, async (req, res, next) => {
   }
 });
 
-app.post('/api/tts', requireUser, async (req, res, next) => {
+app.post('/api/tts', requireUser, limits.tts, async (req, res, next) => {
   const { text, languageCode } = req.body ?? {};
   if (typeof text !== 'string' || !text.trim() || text.length > 300) {
     return res.status(400).json({ error: 'Send up to 300 characters of text' });
@@ -170,7 +213,7 @@ function jpegFrames(text) {
 
 // After each take: transcribe it (fillers kept), measure it, and write up to
 // three director's notes, with Claude when available and simple rules otherwise.
-app.post('/api/takes', requireUser, videoUpload.single('video'), async (req, res, next) => {
+app.post('/api/takes', requireUser, limits.takes, videoUpload.single('video'), async (req, res, next) => {
   if (!req.file) return res.status(400).json({ error: 'Send a video in the "video" field' });
   const audioPath = `${req.file.path}.wav`;
   let stored = false;
@@ -325,7 +368,7 @@ app.put('/api/takes/:id/file', requireUser, videoUpload.single('video'), async (
   }
 });
 
-app.post('/api/reels', requireUser, async (req, res, next) => {
+app.post('/api/reels', requireUser, limits.reels, async (req, res, next) => {
   if (!pool) return res.status(503).json({ error: 'Reels need a database' });
   const takeIds = Array.isArray(req.body?.takeIds) ? req.body.takeIds.map(Number).filter(Number.isInteger) : [];
   if (takeIds.length === 0 || takeIds.length > 6) return res.status(400).json({ error: 'Send 1 to 6 take ids in shot order' });
@@ -398,8 +441,21 @@ function safeJson(text) {
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 
-app.use(express.static(config.staticDir, { index: false, maxAge: '1h' }));
-app.get('/{*splat}', (_req, res) => res.sendFile(path.join(config.staticDir, 'index.html')));
+// Hashed build files never change; everything else is checked on each visit.
+app.use(
+  express.static(config.staticDir, {
+    index: false,
+    setHeaders(res, filePath) {
+      const rel = path.relative(config.staticDir, filePath).replace(/\\/g, '/');
+      if (rel.startsWith('assets/')) res.set('Cache-Control', 'public, max-age=31536000, immutable');
+      else if (rel.startsWith('mediapipe/') || rel.startsWith('icons/')) res.set('Cache-Control', 'public, max-age=604800');
+      else res.set('Cache-Control', 'no-cache');
+    },
+  }),
+);
+app.get('/{*splat}', (_req, res) =>
+  res.sendFile(path.join(config.staticDir, 'index.html'), { headers: { 'Cache-Control': 'no-cache' } }),
+);
 
 app.use((err, _req, res, _next) => {
   if (err instanceof multer.MulterError) {
@@ -416,4 +472,11 @@ app.use((err, _req, res, _next) => {
 await migrate();
 sweepOldFiles().catch(() => {});
 setInterval(() => sweepOldFiles().catch(() => {}), 60 * 60 * 1000).unref();
-app.listen(config.port, () => console.log(`Darpan listening on :${config.port}`));
+const server = app.listen(config.port, () => console.log(`Darpan listening on :${config.port}`));
+
+// Render sends SIGTERM before replacing the instance on a deploy.
+process.on('SIGTERM', () => {
+  console.log('SIGTERM: finishing open requests');
+  server.close(() => pool?.end().finally(() => process.exit(0)) ?? process.exit(0));
+  setTimeout(() => process.exit(0), 25_000).unref();
+});

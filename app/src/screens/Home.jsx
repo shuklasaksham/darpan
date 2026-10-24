@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { getIdeas, transcribe } from '../api.js';
+import { getIdeas, getTrends, transcribe } from '../api.js';
 import { pickMimeType, stopStream } from '../media.js';
 
 export const FORMATS = [
@@ -26,8 +26,10 @@ function savedLanguage() {
 export default function Home({ user, health, onShoot, onLogOut }) {
   const [idea, setIdea] = useState('');
   const [language, setLanguage] = useState(savedLanguage);
-  const [ideas, setIdeas] = useState(null);
+  const [cards, setCards] = useState(null); // null while loading
   const firstName = user.name.split(/\s+/)[0];
+  // Trend cards come from Claude; the AgenticOrg agent's ideas are the fallback.
+  const cardSource = health?.scripts ? 'claude' : health?.director ? 'agenticorg' : null;
 
   useEffect(() => {
     try {
@@ -36,11 +38,18 @@ export default function Home({ user, health, onShoot, onLogOut }) {
   }, [language]);
 
   useEffect(() => {
-    if (!health?.director) return;
-    getIdeas(language)
-      .then(({ ideas }) => setIdeas(ideas))
-      .catch(() => setIdeas([]));
-  }, [health?.director, language]);
+    if (!cardSource) return;
+    let alive = true;
+    setCards(null);
+    const load =
+      cardSource === 'claude'
+        ? getTrends(language).then(({ cards }) => cards)
+        : getIdeas(language).then(({ ideas }) => ideas);
+    load.then((list) => alive && setCards(list ?? [])).catch(() => alive && setCards([]));
+    return () => {
+      alive = false;
+    };
+  }, [cardSource, language]);
 
   // Whatever is in the box is the idea, word for word.
   const typedIdea = idea.trim();
@@ -87,6 +96,30 @@ export default function Home({ user, health, onShoot, onLogOut }) {
         </div>
       </form>
 
+      {cardSource && (cards === null || cards.length > 0) && (
+        <section className="stack">
+          <div className="section-title">
+            <h3>Trending in your niche</h3>
+            <span className="muted">Tap to shoot</span>
+          </div>
+          <div className="trend-cards">
+            {cards === null
+              ? [0, 1, 2].map((i) => <div key={i} className="trend-skeleton" aria-hidden="true" />)
+              : cards.map((card, i) => (
+                  <button
+                    key={i}
+                    className="trend-card"
+                    onClick={() => onShoot({ idea: card.title, format: card.format ?? null, language })}
+                  >
+                    <strong>{card.title}</strong>
+                    {card.why && <p>{card.why}</p>}
+                    {card.format && <span className="format">{card.format}</span>}
+                  </button>
+                ))}
+          </div>
+        </section>
+      )}
+
       <section className="stack">
         <h3>{typedIdea ? 'Shoot it as…' : 'Or pick a format'}</h3>
         <div className="chips">
@@ -102,24 +135,6 @@ export default function Home({ user, health, onShoot, onLogOut }) {
         </div>
       </section>
 
-      {health?.director && (
-        <section className="stack">
-          <h3>Ideas for your niche</h3>
-          {ideas === null && <p className="muted">Darpan is thinking…</p>}
-          {ideas?.length === 0 && <p className="muted">No ideas right now. Type your own above.</p>}
-          {ideas?.map((item, i) => (
-            <button
-              key={i}
-              className="idea"
-              onClick={() => onShoot({ idea: item.title, format: item.format ?? null, language })}
-            >
-              <strong>{item.title}</strong>
-              {item.format && <span className="muted"> · {item.format}</span>}
-              {item.why && <p className="muted">{item.why}</p>}
-            </button>
-          ))}
-        </section>
-      )}
     </main>
   );
 }

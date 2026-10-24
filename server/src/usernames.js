@@ -39,6 +39,7 @@ export function transliterateWord(word) {
   // Each syllable: { onset: consonant cluster, vowel, inherent: bool, coda: string }
   const syllables = [];
   let onset = '';
+  let clustered = 0; // consonants joined into the onset with a virama
 
   for (let i = 0; i < chars.length; i++) {
     const ch = chars[i];
@@ -51,13 +52,15 @@ export function transliterateWord(word) {
       }
       if (chars[i + 1] === VIRAMA) {
         onset += latin;
+        clustered++;
         i++;
         continue;
       }
       const matra = MATRAS[chars[i + 1]];
       if (matra !== undefined) i++;
-      syllables.push({ onset: onset + latin, vowel: matra ?? 'a', inherent: matra === undefined, coda: '' });
+      syllables.push({ onset: onset + latin, vowel: matra ?? 'a', inherent: matra === undefined, coda: '', cluster: clustered > 0, glide: clustered > 0 && 'यरव'.includes(ch) });
       onset = '';
+      clustered = 0;
     } else if (VOWELS[ch] !== undefined) {
       syllables.push({ onset, vowel: VOWELS[ch], inherent: false, coda: '' });
       onset = '';
@@ -76,7 +79,10 @@ export function transliterateWord(word) {
     const isLast = i === syllables.length - 1;
     const next = syllables[i + 1];
     const prev = syllables[i - 1];
-    if (isLast || (prev.vowel && next?.vowel && next.onset)) s.vowel = '';
+    // ...but it stays before a consonant cluster (अनन्या is "ananya", not "annya").
+    // A final "a" after a cluster ending in य/र/व stays too (आदित्य "aditya", इंद्र "indra").
+    if (isLast && s.glide) continue;
+    if (isLast || (prev.vowel && next?.vowel && next.onset && !next.cluster)) s.vowel = '';
   }
 
   let out = '';
