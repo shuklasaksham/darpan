@@ -82,7 +82,8 @@ const SCRIPT_RULES = {
   Hindi: 'Write every line in Hindi using Devanagari script.',
   Hinglish:
     'Write every line in Hinglish: conversational Hindi mixed with English, in Roman script, the way young Indian creators actually talk.',
-  English: 'Write every line in simple Indian English.',
+  English:
+    'Write every word in simple, natural Indian English. Do not use any Hindi or Hinglish words (no "yaar", "bas", "aaj", "dekho") and no Devanagari, even if the idea or trend notes are in Hindi or Hinglish: translate them.',
 };
 
 /** Pulls the first text block's JSON, after checking the response is usable. */
@@ -245,6 +246,15 @@ The lines, read in order, must form one complete script: hook first, then the co
 
 Keep the creator's idea exactly as they gave it; don't swap it for a different topic. Use the trend notes only where they genuinely fit.`;
 
+const HINGLISH_WORDS =
+  /\b(hai|hain|kya|nahi|nahin|aaj|mein|aur|bhi|bas|yaar|dekho|kaise|kyun|toh|wala|wali|karo|karte|karti|karta|hoon|raha|rahi|sabse|accha|chalo|dosto)\b/gi;
+
+/** True when an "English" script contains Devanagari or several Hinglish words. */
+function looksHindi(script) {
+  const text = [script.title, script.hook, ...(script.shots ?? []).map((s) => `${s.line} ${s.direction}`)].join(' ');
+  return /[ऀ-ॿ]/.test(text) || (text.match(HINGLISH_WORDS) ?? []).length >= 3;
+}
+
 export async function writeScript({ creator, idea, format, language }) {
   if (!client) throw new ClaudeError('The script writer is not set up yet', 503);
   const lang = SCRIPT_RULES[language] ? language : 'Hinglish';
@@ -263,18 +273,41 @@ export async function writeScript({ creator, idea, format, language }) {
       idea ? `Creator's idea, in their own words: "${idea}"` : 'The creator has no specific idea yet; pick one that fits the niche and format.',
       format ? `Format: ${format}` : 'Format: choose what suits the idea.',
       `Language: ${SCRIPT_RULES[lang]}`,
-      GENDER_RULES[creator.gender] ?? GENDER_RULES.prefer_not_to_say,
+      // Hindi verb gender only matters when the lines are in Hindi or Hinglish.
+      lang === 'English' ? '' : (GENDER_RULES[creator.gender] ?? GENDER_RULES.prefer_not_to_say),
       trends ? `What's trending in this niche right now:\n${trends}` : 'No trend notes available.',
-    ].join('\n\n');
+    ]
+      .filter(Boolean)
+      .join('\n\n');
 
-    const message = await create({
+    // The language rule also goes in the system prompt, where it outranks the
+    // (often Hinglish) idea and trend notes in the brief.
+    const system = `${SCRIPT_SYSTEM}\n\nLANGUAGE (strict): ${SCRIPT_RULES[lang]} This applies to every field: title, hook, lines, directions, background, lighting and caption.`;
+    const params = {
       model: MODEL,
       max_tokens: 8000,
       output_config: { effort: 'low', format: { type: 'json_schema', schema: scriptSchema } },
-      system: SCRIPT_SYSTEM,
-      messages: [{ role: 'user', content: brief }],
-    });
-    const script = parseJsonResponse(message);
+      system,
+    };
+    const messages = [{ role: 'user', content: brief }];
+    let message = await create({ ...params, messages });
+    let script = parseJsonResponse(message);
+    // An "English" script that still slipped into Hindi or Hinglish gets one rewrite.
+    if (lang === 'English' && looksHindi(script)) {
+      message = await create({
+        ...params,
+        messages: [
+          ...messages,
+          { role: 'assistant', content: JSON.stringify(script) },
+          {
+            role: 'user',
+            content:
+              'Rewrite this exact script with every field in natural Indian English only: no Hindi or Hinglish words and no Devanagari. Same shots, same meaning.',
+          },
+        ],
+      });
+      script = parseJsonResponse(message);
+    }
     script.shots = (script.shots ?? []).slice(0, 6);
     if (script.shots.length === 0) throw new ClaudeError('Claude returned an empty shot list. Try again.');
     script.language = lang;
