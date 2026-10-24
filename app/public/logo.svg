@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 90" width="60" height="90">
+  <title>Darpan mark</title>
+  <g transform="translate(0 -10)">
+    <g fill="none" stroke="#14161B" stroke-width="12" stroke-linecap="round">
+      <circle cx="30" cy="70" r="24"/><path d="M54 16V94"/>
+    </g>
+    <path fill="#F0A23B" d="M22.22 77.78A11 11 0 0 1 37.78 62.22Z"/>
+  </g>
+</svg>

@@ -31,6 +31,8 @@ export const logOut = () => postJson('/api/auth/logout', {});
 export const getIdeas = (language) => request(`/api/director/ideas?language=${encodeURIComponent(language)}`);
 export const getTrends = (language) => request(`/api/trends?language=${encodeURIComponent(language)}`);
 export const writeScript = (brief) => postJson('/api/script', brief);
+export const saveScript = (planId, script) =>
+  request(`/api/plans/${planId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ script }) });
 export const checkFrame = (body) => postJson('/api/frame-check', body);
 export const keepTake = (id) => postJson(`/api/takes/${id}/keep`, {});
 export const makeReel = (body) => postJson('/api/reels', body);

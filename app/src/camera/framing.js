@@ -10,9 +10,9 @@ export const EYE = 0.065; // eye line, roughly the middle of the head
 export const CHIN = 0.13;
 
 export const FRAMINGS = {
-  closeup: { headTop: 0.1, scale: 4.6, tolerance: 0.07, label: 'Close-up' },
-  medium: { headTop: 0.12, scale: 2.6, tolerance: 0.06, label: 'Chest up' },
-  waist_up: { headTop: 0.1, scale: 1.65, tolerance: 0.05, label: 'Waist up' },
+  closeup: { headTop: 0.1, scale: 3.3, tolerance: 0.07, label: 'Close-up' },
+  medium: { headTop: 0.12, scale: 1.95, tolerance: 0.06, label: 'Chest up' },
+  waist_up: { headTop: 0.1, scale: 1.35, tolerance: 0.05, label: 'Waist up' },
   full_body: { headTop: 0.07, scale: 0.86, tolerance: 0.05, label: 'Full body' },
 };
 

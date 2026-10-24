@@ -71,7 +71,7 @@ export function eyeLookDown(landmarker, canvas) {
  * `frame` is a canvas holding the cropped camera frame; `region` is the head
  * area in frame fractions.
  */
-export function detectFace(detector, frame, region, scratch) {
+export function detectFace(detector, frame, region, scratch, searchWholeFrame = true) {
   const { width: fw, height: fh } = frame;
   const sx = region.x * fw;
   const sy = region.y * fh;
@@ -85,7 +85,8 @@ export function detectFace(detector, frame, region, scratch) {
   let source = 'silhouette';
   if (found) {
     found = mapBack(found, (x, y) => [(sx + x * sw) / fw, (sy + y * sh) / fh]);
-  } else {
+  } else if (searchWholeFrame) {
+    // The whole-frame search is the expensive one, so it runs every few ticks.
     found = best(detector.detect(frame), frame);
     source = found ? 'full frame' : 'none';
   }

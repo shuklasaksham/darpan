@@ -7,8 +7,9 @@ const GENDERS = [
   { value: 'prefer_not_to_say', label: 'Prefer not to say' },
 ];
 
-export default function Auth({ onSignedIn }) {
-  const [mode, setMode] = useState('welcome');
+export default function Auth({ initialMode = 'welcome', onSignedIn, onExit }) {
+  const [mode, setMode] = useState(initialMode);
+  const back = () => (onExit ? onExit() : setMode('welcome'));
 
   return (
     <main>
@@ -38,8 +39,8 @@ export default function Auth({ onSignedIn }) {
           <button onClick={() => setMode('login')}>I already have an account</button>
         </div>
       )}
-      {mode === 'signup' && <SignUp onSignedIn={onSignedIn} onBack={() => setMode('welcome')} />}
-      {mode === 'login' && <LogIn onSignedIn={onSignedIn} onBack={() => setMode('welcome')} />}
+      {mode === 'signup' && <SignUp onSignedIn={onSignedIn} onBack={back} />}
+      {mode === 'login' && <LogIn onSignedIn={onSignedIn} onBack={back} />}
     </main>
   );
 }

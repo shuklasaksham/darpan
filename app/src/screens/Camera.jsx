@@ -12,8 +12,8 @@ const VIDEO_TYPES = ['video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;code
 const ASPECTS = { '9:16': 9 / 16, '4:5': 4 / 5, '1:1': 1, '16:9': 16 / 9 };
 const FRAMING_IDS = new Set(['no_face', 'no_body', 'raise_phone', 'lower_phone', 'show_feet', 'come_closer', 'move_back', 'step_left', 'step_right']);
 const LIGHT_IDS = new Set(['backlight', 'face_dark', 'face_bright', 'room_dark']);
-const TICK_MS = 125;
-const TICK_RECORDING_MS = 250;
+const TICK_MS = 200;
+const TICK_RECORDING_MS = 400;
 const DETECT_EDGE = 360; // long edge of the frame the models see
 const LIGHT_EDGE = 240;
 const RECORD_EDGE = 1280;
@@ -53,7 +53,7 @@ function fallbackScript({ idea, format, language }) {
   };
 }
 
-export default function Camera({ shoot, health, onClose }) {
+export default function Camera({ shoot, planned: initialPlan, health, onClose }) {
   const debug = useMemo(() => new URLSearchParams(window.location.search).has('debug'), []);
   const language = shoot.language;
 
@@ -83,8 +83,8 @@ export default function Camera({ shoot, health, onClose }) {
   // Kept takes live in memory as blobs until the camera closes.
   useEffect(() => () => Object.values(keptRef.current).forEach((k) => URL.revokeObjectURL(k.url)), []);
 
-  const [planned, setPlanned] = useState(null); // { planId, script }
-  const [scriptState, setScriptState] = useState('loading'); // loading | ready | error
+  const [planned, setPlanned] = useState(initialPlan); // { planId, script }, finalised on the Script screen
+  const [scriptState, setScriptState] = useState('ready');
   const [scriptError, setScriptError] = useState('');
   const [showScript, setShowScript] = useState(false);
   const [shotIndex, setShotIndex] = useState(0);
@@ -108,35 +108,7 @@ export default function Camera({ shoot, health, onClose }) {
 
   // --- Script -------------------------------------------------------------
 
-  const requestScript = () => {
-    setScriptState('loading');
-    setScriptError('');
-    if (!health?.scripts) {
-      setPlanned({ planId: null, script: fallbackScript(shoot) });
-      setScriptState('ready');
-      setShowScript(true);
-      return () => {};
-    }
-    let cancelled = false;
-    writeScript({ idea: shoot.idea, format: shoot.format, language })
-      .then((result) => {
-        if (cancelled) return;
-        setPlanned(result);
-        setShotIndex(0);
-        setScriptState('ready');
-        setShowScript(true);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setScriptError(err.message);
-        setScriptState('error');
-      });
-    return () => {
-      cancelled = true;
-    };
-  };
 
-  useEffect(requestScript, [shoot, health?.scripts]);
 
   // Keep the screen awake while the camera is open (Android Chrome, iOS 16.4+).
   useEffect(() => {
@@ -175,13 +147,17 @@ export default function Camera({ shoot, health, onClose }) {
     }
     navigator.mediaDevices
       .getUserMedia({
-        video: { facingMode: facing, width: { ideal: 1080 }, height: { ideal: 1920 } },
+        video: { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 }, resizeMode: 'none' },
         audio: true,
       })
       .then((stream) => {
         if (cancelled) return stopStream(stream);
         streamRef.current = stream;
         videoRef.current.srcObject = stream;
+        // Some phones start zoomed in; use the widest zoom the camera allows.
+        const track = stream.getVideoTracks()[0];
+        const zoom = track?.getCapabilities?.().zoom;
+        if (zoom) track.applyConstraints({ advanced: [{ zoom: zoom.min }] }).catch(() => {});
       })
       .catch(() => !cancelled && setCameraError('Allow camera and microphone access to start shooting.'));
     return () => {
@@ -190,6 +166,7 @@ export default function Camera({ shoot, health, onClose }) {
       cancelAnimationFrame(recordRafRef.current);
       stopStream(streamRef.current);
       streamRef.current = null;
+      if (videoRef.current) videoRef.current.srcObject = null;
     };
   }, [facing]);
 
@@ -333,7 +310,7 @@ export default function Camera({ shoot, health, onClose }) {
       if (faceDetector) {
         const t0 = performance.now();
         try {
-          faceResult = detectFace(faceDetector, detectCanvas, headRegion(s.framing, s.aspect), scratch);
+          faceResult = detectFace(faceDetector, detectCanvas, headRegion(s.framing, s.aspect), scratch, tick % 3 === 0);
         } catch (err) {
           faceResult = { source: 'error' };
         }
@@ -350,7 +327,7 @@ export default function Camera({ shoot, health, onClose }) {
           .catch(() => (poseLandmarker = 'off'));
       }
       if (!needsBody) lastBody = null;
-      if (needsBody && poseLandmarker?.detect && tick % 2 === 0) {
+      if (needsBody && poseLandmarker?.detect && tick % 3 === 0) {
         try {
           const result = poseLandmarker.detect(detectCanvas);
           lastBody = bodyGeometry(result.landmarks[0], face);
@@ -361,8 +338,10 @@ export default function Camera({ shoot, health, onClose }) {
 
       // Light: the middle of the face and the whole frame.
       const [lw, lh] = sizeFor(s.aspect, LIGHT_EDGE);
-      lightCanvas.width = lw;
-      lightCanvas.height = lh;
+      if (lightCanvas.width !== lw || lightCanvas.height !== lh) {
+        lightCanvas.width = lw;
+        lightCanvas.height = lh;
+      }
       lightCtx.drawImage(detectCanvas, 0, 0, lw, lh);
       const readings = lightReadings(lightCtx.getImageData(0, 0, lw, lh), face);
 

@@ -36,7 +36,9 @@ export async function speak(text, languageCode) {
         language_code: language,
         model: 'bulbul:v3',
         speaker: config.sarvamSpeaker,
-        pace: 1.05,
+        // A touch slower and more expressive, so tips sound warm rather than curt.
+        pace: 0.92,
+        temperature: 0.75,
         output_audio_codec: 'mp3',
       }),
       signal: AbortSignal.timeout(10_000),

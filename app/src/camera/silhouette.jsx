@@ -51,7 +51,7 @@ export function Silhouette({ framing, pose, aspect, matched, mirrored }) {
   const H = 1000;
   const W = aspect * H;
   const pt = ([x, y]) => [W / 2 + x * scale * H, (headTop + y * scale) * H];
-  const s = skeleton(pose);
+  const s = skeleton(framing === 'waist_up' || framing === 'full_body' ? pose : 'neutral');
   const limbWidth = 0.055 * scale * H;
   const [hx, hy] = pt(s.head.c);
   const torso = s.torso.map((p) => pt(p).join(',')).join(' ');

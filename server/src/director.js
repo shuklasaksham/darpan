@@ -24,6 +24,7 @@ export class DirectorError extends Error {
 
 const OUTPUT_FORMATS = {
   suggest_ideas: 'JSON: { ideas: [{ title, format, why }] } with 4-6 ideas',
+  review_script: 'JSON: { notes: [string] } with at most 3 short, specific suggestions to make the reel land better',
 };
 
 async function ask(action, inputs) {
@@ -59,6 +60,12 @@ const creatorInputs = (creator) => ({
   creator_niche: creator.niche,
   creator_gender: creator.gender,
 });
+
+/** The director's review of Claude's script, shown before shooting. */
+export async function reviewScript({ creator, script, language }) {
+  const { notes } = await ask('review_script', { ...creatorInputs(creator), language: language || 'Hinglish', script });
+  return Array.isArray(notes) ? notes.filter((n) => typeof n === 'string').slice(0, 3) : [];
+}
 
 export function suggestIdeas({ creator, language }) {
   return ask('suggest_ideas', { ...creatorInputs(creator), language: language || 'Hinglish' });

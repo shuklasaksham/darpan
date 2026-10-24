@@ -11,7 +11,7 @@ import { analyzeTake, ruleNotes } from './analyze.js';
 import { enqueueReel, jobStatus, sweepOldFiles, takesDir } from './reels.js';
 import { authRouter, loadUser, requireUser } from './auth.js';
 import { transcribeFile, transcribeWithWords, TranscribeError } from './transcribe.js';
-import { directorConfigured, DirectorError, suggestIdeas } from './director.js';
+import { directorConfigured, DirectorError, reviewScript, suggestIdeas } from './director.js';
 import { checkFrame, ClaudeError, claudeConfigured, directorNotes, trendCards, writeScript } from './claude.js';
 import { speak, TtsError, ttsConfigured } from './tts.js';
 import { limits } from './limits.js';
@@ -141,6 +141,13 @@ app.post('/api/script', requireUser, limits.script, async (req, res, next) => {
       language,
     };
     const { script, messageId } = await writeScript({ creator: req.user, ...brief });
+    // The AgenticOrg director reviews every script; its notes show before shooting.
+    if (directorConfigured) {
+      script.director_notes = await reviewScript({ creator: req.user, script, language: script.language }).catch((err) => {
+        console.error('AgenticOrg script review failed:', err.message);
+        return [];
+      });
+    }
     let planId = null;
     if (pool) {
       const { rows } = await pool.query(
@@ -158,6 +165,38 @@ app.post('/api/script', requireUser, limits.script, async (req, res, next) => {
 // One Claude look at a frame per user every few seconds at most.
 const FRAME_CHECK_GAP_MS = 4000;
 const lastFrameCheck = new Map();
+
+// Save the creator's edits to a script before shooting.
+app.put('/api/plans/:id', requireUser, async (req, res, next) => {
+  const shots = req.body?.script?.shots;
+  if (!pool) return res.status(503).json({ error: 'Saving scripts needs a database' });
+  if (!Array.isArray(shots) || shots.length < 1 || shots.length > 6) {
+    return res.status(400).json({ error: 'A script needs 1 to 6 shots' });
+  }
+  const text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+  const FRAMINGS = ['closeup', 'medium', 'waist_up', 'full_body'];
+  try {
+    const plan = await loadPlan(req.params.id, req.user.id);
+    if (!plan) return res.status(404).json({ error: 'Script not found' });
+    const cleaned = {
+      ...plan,
+      title: text(req.body.script.title, 120) || plan.title,
+      shots: shots.map((s, i) => ({
+        ...(plan.shots?.[i] ?? {}),
+        title: text(s.title, 60) || `Shot ${i + 1}`,
+        line: text(s.line, 400),
+        direction: text(s.direction, 200),
+        framing: FRAMINGS.includes(s.framing) ? s.framing : 'medium',
+        pose: typeof s.pose === 'string' ? s.pose : 'neutral',
+        duration_seconds: Math.min(90, Math.max(1, Number(s.duration_seconds) || 5)),
+      })),
+    };
+    await pool.query('UPDATE shoot_plans SET plan = $3 WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id, cleaned]);
+    res.json({ planId: Number(req.params.id), script: cleaned });
+  } catch (err) {
+    next(err);
+  }
+});
 
 app.post('/api/frame-check', requireUser, limits.frameCheck, async (req, res, next) => {
   const { image, planId, shotIndex, metrics, language } = req.body ?? {};
@@ -470,6 +509,7 @@ app.use((err, _req, res, _next) => {
 });
 
 await migrate();
+if (!directorConfigured) console.warn("AgenticOrg director is not configured: set AGENTICORG_API_KEY and AGENTICORG_DIRECTOR_AGENT_ID");
 sweepOldFiles().catch(() => {});
 setInterval(() => sweepOldFiles().catch(() => {}), 60 * 60 * 1000).unref();
 const server = app.listen(config.port, () => console.log(`Darpan listening on :${config.port}`));
