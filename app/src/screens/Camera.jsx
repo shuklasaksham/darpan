@@ -864,8 +864,8 @@ function TakeReview({ take, isLast, onRetake, onKeep }) {
         <>
           <div className="score-row">
             <span className={`score ${band(result.score)}`}>
-              {result.score}
-              <small>/100</small>
+              {(result.score / 10).toFixed(1)}
+              <small>/10</small>
             </span>
             <div>
               <strong>Director&apos;s notes</strong>
