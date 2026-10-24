@@ -58,7 +58,8 @@ app.use((req, res, next) => {
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Permissions-Policy': 'camera=(self), microphone=(self), screen-wake-lock=(self), geolocation=()',
-    'Cross-Origin-Opener-Policy': 'same-origin',
+    // allow-popups: Razorpay opens card/netbanking steps in a popup that must talk back.
+    'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
   });
   if (process.env.NODE_ENV === 'production') {
     res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
