@@ -631,3 +631,6 @@ button.big { padding: 18px 34px; font-size: 1.1rem; }
 .plan-card .row { gap: 10px; }
 .small-button { min-height: 40px; padding: 8px 14px; font-size: 0.9rem; flex: none !important; }
 .good-note { color: var(--good); font-weight: 700; margin-bottom: 6px !important; }
+
+.score { width: auto; min-width: 74px; padding: 0 10px; border-radius: 999px; height: 52px; display: flex; align-items: baseline; justify-content: center; gap: 2px; line-height: 52px; }
+.score small { font-size: 0.85rem; font-weight: 700; opacity: 0.75; }

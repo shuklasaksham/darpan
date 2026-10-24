@@ -863,7 +863,10 @@ function TakeReview({ take, isLast, onRetake, onKeep }) {
       {take.status === 'done' && (
         <>
           <div className="score-row">
-            <span className={`score ${band(result.score)}`}>{result.score}</span>
+            <span className={`score ${band(result.score)}`}>
+              {result.score}
+              <small>/100</small>
+            </span>
             <div>
               <strong>Director&apos;s notes</strong>
               {result.praise && <p className="muted">{result.praise}</p>}

@@ -79,7 +79,7 @@ export default function Reel({ shots, kept, onBack, onDone }) {
                   <strong>
                     {i + 1}. {shot.title}
                   </strong>
-                  {kept[i].result?.score != null && <p className="muted">Score {kept[i].result.score}</p>}
+                  {kept[i].result?.score != null && <p className="muted">Score {kept[i].result.score}/100</p>}
                 </div>
               </li>
             ))}
