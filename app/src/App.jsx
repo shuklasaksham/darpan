@@ -6,12 +6,14 @@ import Camera from './screens/Camera.jsx';
 import Script from './screens/Script.jsx';
 import Landing from './screens/Landing.jsx';
 import Admin from './screens/Admin.jsx';
+import Legal, { LEGAL_PATHS } from './screens/Legal.jsx';
 import { activePlanId, rememberActive, resumeState } from './screens/Recent.jsx';
 import { getRecent } from './api.js';
 
 const IS_ADMIN = window.location.pathname.startsWith('/admin');
 
 export default function App() {
+  if (LEGAL_PATHS.includes(window.location.pathname)) return <Legal page={window.location.pathname.slice(1)} />;
   return IS_ADMIN ? <Admin /> : <CreatorApp />;
 }
 

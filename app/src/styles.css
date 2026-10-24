@@ -693,3 +693,12 @@ td:nth-child(4) { white-space: normal; min-width: 140px; }
 .upgrade-sheet li::before { content: '✓  '; color: var(--marigold); font-weight: 800; }
 .upgrade-sheet button.primary { background: var(--marigold); border-color: var(--marigold); color: #1a1206; }
 .upgrade-sheet .muted, .upgrade-sheet button.link { color: rgb(255 255 255 / 0.7); }
+
+.legal article { display: flex; flex-direction: column; gap: 14px; max-width: 70ch; }
+.legal h1 { font-size: 2.4rem; }
+.legal section p { color: var(--fg); }
+.legal-links a { color: var(--muted); }
+
+.page-steps { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 14px; background: rgb(255 255 255 / 0.08); }
+.username-copy { display: flex; justify-content: space-between; align-items: center; min-height: 48px; background: #fff; color: #111; border-color: #fff; font-size: 1.1rem; }
+.username-copy span { font-size: 0.85rem; color: var(--marigold-ink); }

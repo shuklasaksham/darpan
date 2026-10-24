@@ -19,6 +19,9 @@ services:
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
+      # Pro via Razorpay Payment Page (no API keys needed); Pro is granted by webhook.
+      - key: RAZORPAY_PAYMENT_PAGE_URL
+        value: https://rzp.io/rzp/NSK2wxM7
       - key: RAZORPAY_KEY_ID
         sync: false
       - key: RAZORPAY_KEY_SECRET

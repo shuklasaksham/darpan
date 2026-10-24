@@ -17,6 +17,8 @@ export const config = {
   razorpayKeyId: process.env.RAZORPAY_KEY_ID?.trim(),
   razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET?.trim(),
   razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET?.trim(),
+  // A Razorpay Payment Page for Pro (works without API keys; Pro is granted by webhook).
+  razorpayPaymentPageUrl: process.env.RAZORPAY_PAYMENT_PAGE_URL?.trim(),
   razorpayBaseUrl: process.env.RAZORPAY_BASE_URL || 'https://api.razorpay.com',
   // Pine Labs Online (Plural) payments for Pro.
   pinelabsClientId: process.env.PINELABS_CLIENT_ID,

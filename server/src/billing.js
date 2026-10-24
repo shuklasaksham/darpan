@@ -19,7 +19,19 @@ const BASE = config.pinelabsEnv === 'production' ? 'https://api.pluralpay.in' : 
 const baseUrl = () => config.pinelabsBaseUrl || BASE;
 const razorpayConfigured = Boolean(config.razorpayKeyId && config.razorpayKeySecret);
 const pinelabsConfigured = Boolean(config.pinelabsClientId && config.pinelabsClientSecret && config.publicUrl);
-export const paymentProvider = razorpayConfigured ? 'razorpay' : pinelabsConfigured ? 'pinelabs' : null;
+const pageConfigured = Boolean(config.razorpayPaymentPageUrl && config.razorpayWebhookSecret);
+const liveKeys = razorpayConfigured && config.razorpayKeyId.startsWith('rzp_live_');
+// Live API keys first; then the Payment Page (real money without API keys);
+// then test keys; then Pine Labs.
+export const paymentProvider = liveKeys
+  ? 'razorpay'
+  : pageConfigured
+    ? 'razorpay_page'
+    : razorpayConfigured
+      ? 'razorpay'
+      : pinelabsConfigured
+        ? 'pinelabs'
+        : null;
 export const paymentsConfigured = Boolean(paymentProvider);
 
 export class BillingError extends Error {
@@ -193,15 +205,48 @@ async function razorpayWebhook(req, res) {
       try {
         const event = JSON.parse(req.body.toString('utf8'));
         const orderId = event.payload?.order?.entity?.id ?? event.payload?.payment?.entity?.order_id;
+        let handled = false;
         if (orderId) {
           const { rows } = await pool.query("SELECT merchant_order_reference FROM payments WHERE provider = 'razorpay' AND pine_order_id = $1", [orderId]);
-          if (rows[0]) await settle(rows[0].merchant_order_reference);
+          if (rows[0]) {
+            await settle(rows[0].merchant_order_reference);
+            handled = true;
+          }
         }
+        // Not one of our API orders: a Payment Page payment, matched by the username field.
+        if (!handled && event.event === 'payment.captured') await settlePagePayment(event.payload?.payment?.entity);
         res.json({ ok: true });
       } catch (err) {
         console.error('Razorpay webhook failed:', err.message);
         res.status(500).json({ error: 'Webhook failed' });
       }
+}
+
+/**
+ * Grants Pro for a captured Payment Page payment. The page has a "Darpan
+ * username" field; Razorpay passes form fields in the payment's notes.
+ */
+async function settlePagePayment(payment) {
+  if (!payment?.id || payment.status !== 'captured') return;
+  if (payment.currency !== 'INR' || Number(payment.amount) < config.proPricePaise) {
+    console.error('Payment Page payment below the Pro price, not granting Pro:', payment.id, payment.amount);
+    return;
+  }
+  const candidates = Object.values(payment.notes ?? {})
+    .filter((v) => typeof v === 'string')
+    .map((v) => v.trim().replace(/^@/, '').toLowerCase());
+  const { rows } = await pool.query('SELECT id FROM users WHERE username = ANY($1) LIMIT 1', [candidates]);
+  if (!rows[0]) {
+    console.error('Payment Page payment with no matching Darpan username:', payment.id, JSON.stringify(payment.notes));
+    return;
+  }
+  // The payment ID is the reference, so a repeated webhook can't grant Pro twice.
+  const { rowCount } = await pool.query(
+    `INSERT INTO payments (user_id, merchant_order_reference, pine_order_id, amount_paise, status, provider, raw)
+     VALUES ($1, $2, $3, $4, 'created', 'razorpay_page', $5) ON CONFLICT (merchant_order_reference) DO NOTHING`,
+    [rows[0].id, payment.id, payment.order_id ?? null, Number(payment.amount), payment],
+  );
+  if (rowCount) await record(payment.id, { paid: true, status: 'CAPTURED', raw: payment });
 }
 
 // --- Routes ------------------------------------------------------------------
@@ -236,6 +281,7 @@ billingRouter.get('/api/billing', requireUser, async (req, res, next) => {
       priceRupees: config.proPricePaise / 100,
       paymentsEnabled: paymentsConfigured,
       provider: paymentProvider,
+      username: req.user.username,
     });
   } catch (err) {
     next(err);
@@ -244,6 +290,9 @@ billingRouter.get('/api/billing', requireUser, async (req, res, next) => {
 
 billingRouter.post('/api/billing/checkout', requireUser, async (req, res, next) => {
   if (!paymentsConfigured) return res.status(503).json({ error: 'Payments are not set up yet' });
+  if (paymentProvider === 'razorpay_page') {
+    return res.json({ provider: 'razorpay_page', url: config.razorpayPaymentPageUrl, username: req.user.username });
+  }
   if (paymentProvider === 'razorpay') {
     // Razorpay: create an order here; the app opens Razorpay Checkout with it.
     try {

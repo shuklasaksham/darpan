@@ -19,6 +19,10 @@ function loadRazorpay() {
 export async function goPro(setError) {
   try {
     const order = await startCheckout();
+    if (order.provider === 'razorpay_page') {
+      window.open(order.url, '_blank', 'noopener');
+      return;
+    }
     if (order.provider !== 'razorpay') {
       window.location.assign(order.redirectUrl);
       return;
@@ -125,9 +129,10 @@ function UpgradeSheet({ billing, busy, error, onPay, onClose }) {
             <li key={p}>{p}</li>
           ))}
         </ul>
+        {billing.provider === 'razorpay_page' && <PagePaymentSteps username={billing.username} />}
         {billing.paymentsEnabled ? (
           <button className="primary" disabled={busy} onClick={onPay}>
-            {busy ? 'Opening payment…' : `Pay ₹${billing.priceRupees}`}
+            {busy ? 'Opening payment…' : billing.provider === 'razorpay_page' ? `Pay ₹${billing.priceRupees} on Razorpay` : `Pay ₹${billing.priceRupees}`}
           </button>
         ) : (
           <button className="primary" disabled>
@@ -136,10 +141,34 @@ function UpgradeSheet({ billing, busy, error, onPay, onClose }) {
         )}
         <p className="muted small">Secure payment by {billing.provider === 'pinelabs' ? 'Pine Labs' : 'Razorpay'}: UPI, cards and netbanking. No auto-renewal.</p>
         {error && <p className="error">{error}</p>}
+        {billing.provider === 'razorpay_page' && (
+          <button onClick={() => window.location.reload()}>I've paid, check now</button>
+        )}
         <button className="link" onClick={onClose}>
           Not now
         </button>
       </div>
+    </div>
+  );
+}
+
+/** The Payment Page can't know who's paying, so the creator types their username there. */
+function PagePaymentSteps({ username }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="page-steps">
+      <p>
+        On the payment page, enter your Darpan username in the <strong>Darpan username</strong> box:
+      </p>
+      <button
+        className="username-copy"
+        onClick={() => {
+          navigator.clipboard?.writeText(username).then(() => setCopied(true)).catch(() => {});
+        }}
+      >
+        {username} <span>{copied ? 'Copied' : 'Copy'}</span>
+      </button>
+      <p className="muted small">Pro switches on within a minute of paying.</p>
     </div>
   );
 }

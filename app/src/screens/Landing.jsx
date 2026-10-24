@@ -1,4 +1,5 @@
 // Marketing page for visitors who aren't logged in.
+import { LegalFooter } from './Legal.jsx';
 const FREE = ['3 reels a month', 'Scripts for your niche and trends', 'Live camera coach', "Director's notes on every take", '720p export with the Darpan tag'];
 const PRO = ['Unlimited reels', 'Everything in Free', 'Full HD 1080p export', 'No Darpan tag', 'Priority reel rendering'];
 
@@ -64,10 +65,7 @@ export default function Landing({ onSignUp, onLogIn }) {
         <p className="muted small center-text">Secure payments by Razorpay. UPI, cards and netbanking. No auto-renewal.</p>
       </section>
 
-      <footer className="landing-footer">
-        <span>© {new Date().getFullYear()} Darpan</span>
-        <a href="mailto:hello@darpan.app">Contact</a>
-      </footer>
+      <LegalFooter />
     </div>
   );
 }
