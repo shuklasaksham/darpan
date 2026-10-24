@@ -1,0 +1,19 @@
+{
+  "name": "darpan-server",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch --env-file-if-exists=../.env src/index.js"
+  },
+  "type": "module",
+  "dependencies": {
+    "express": "^5.3.0",
+    "multer": "^2.5.0",
+    "pg": "^8.23.1"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=24"
+  }
+}
