@@ -15,6 +15,7 @@ import { directorConfigured, DirectorError, reviewScript, suggestIdeas } from '.
 import { checkFrame, ClaudeError, claudeConfigured, directorNotes, trendCards, writeScript } from './claude.js';
 import { speak, TtsError, ttsConfigured } from './tts.js';
 import { limits } from './limits.js';
+import { adminRouter } from './admin.js';
 import { billingRouter, BillingError, planFor, startPaymentSweeper, webhookRouter } from './billing.js';
 
 fs.mkdirSync(config.uploadDir, { recursive: true });
@@ -93,6 +94,7 @@ app.get('/api/health', async (_req, res) => {
 
 app.use('/api/auth', authRouter);
 app.use(billingRouter);
+app.use(adminRouter);
 
 app.post('/api/transcribe', requireUser, limits.transcribe, audioUpload.single('audio'), async (req, res, next) => {
   if (!req.file) return res.status(400).json({ error: 'Send audio in the "audio" field' });
@@ -175,6 +177,26 @@ app.post('/api/plans/:id/review', requireUser, limits.script, async (req, res, n
       return [];
     });
     res.json({ notes });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Recent shoots with their kept takes, so a creator can pick up where they left off.
+app.get('/api/recent', requireUser, async (req, res, next) => {
+  if (!pool) return res.json({ shoots: [] });
+  try {
+    const { rows } = await pool.query(
+      `SELECT p.id, p.created_at, p.brief, p.plan,
+         coalesce((SELECT json_agg(json_build_object('id', t.id, 'shotIndex', t.shot_index, 'score', t.score,
+                                                     'available', t.file_path IS NOT NULL) ORDER BY t.shot_index)
+                   FROM takes t WHERE t.plan_id = p.id AND t.kept), '[]') AS kept,
+         (SELECT json_build_object('id', r.id, 'status', r.status) FROM reels r
+           WHERE r.plan_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS reel
+       FROM shoot_plans p WHERE p.user_id = $1 ORDER BY p.created_at DESC LIMIT 12`,
+      [req.user.id],
+    );
+    res.json({ shoots: rows.map((r) => ({ planId: Number(r.id), createdAt: r.created_at, brief: r.brief, script: r.plan, kept: r.kept, reel: r.reel })) });
   } catch (err) {
     next(err);
   }
@@ -402,6 +424,17 @@ app.post('/api/takes/:id/keep', requireUser, async (req, res, next) => {
 });
 
 // Re-upload a kept take whose file is gone (Render's disk is wiped on restart).
+// A kept take's video, for showing it again after the app reloads.
+app.get('/api/takes/:id/file', requireUser, async (req, res, next) => {
+  try {
+    const take = await ownTake(req.params.id, req.user.id);
+    if (!take || !(await fileExists(take.file_path))) return res.status(404).json({ error: 'Take not available' });
+    res.sendFile(take.file_path, { headers: { 'Cache-Control': 'private, no-store' } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.put('/api/takes/:id/file', requireUser, videoUpload.single('video'), async (req, res, next) => {
   if (!req.file) return res.status(400).json({ error: 'Send the video in the "video" field' });
   let stored = false;

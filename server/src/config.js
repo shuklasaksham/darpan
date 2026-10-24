@@ -11,6 +11,7 @@ export const config = {
   sarvamBaseUrl: process.env.SARVAM_BASE_URL || 'https://api.sarvam.ai',
   // A Bulbul v3 voice; see Sarvam's docs for others (shubh, aditya, ritu, neha...).
   sarvamSpeaker: process.env.SARVAM_SPEAKER || 'priya',
+  adminPassword: process.env.ADMIN_PASSWORD,
   // Pine Labs Online (Plural) payments for Pro.
   pinelabsClientId: process.env.PINELABS_CLIENT_ID,
   pinelabsClientSecret: process.env.PINELABS_CLIENT_SECRET,

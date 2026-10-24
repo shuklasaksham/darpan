@@ -53,7 +53,7 @@ function fallbackScript({ idea, format, language }) {
   };
 }
 
-export default function Camera({ shoot, planned: initialPlan, health, onClose }) {
+export default function Camera({ shoot, planned: initialPlan, initialKept, health, onClose }) {
   const debug = useMemo(() => new URLSearchParams(window.location.search).has('debug'), []);
   const language = shoot.language;
 
@@ -76,18 +76,26 @@ export default function Camera({ shoot, planned: initialPlan, health, onClose })
   const [seconds, setSeconds] = useState(0);
   const [take, setTake] = useState(null); // { status, url, result?, error? }
   const [countdown, setCountdown] = useState(0);
-  const [kept, setKept] = useState({}); // shotIndex -> { takeId, blob, url, result }
+  const [kept, setKept] = useState(initialKept ?? {}); // shotIndex -> { takeId, blob, url, result }
   const [reelOpen, setReelOpen] = useState(false);
   const keptRef = useRef(kept);
   keptRef.current = kept;
   // Kept takes live in memory as blobs until the camera closes.
-  useEffect(() => () => Object.values(keptRef.current).forEach((k) => URL.revokeObjectURL(k.url)), []);
+  useEffect(
+    () => () => Object.values(keptRef.current).forEach((k) => k.url.startsWith('blob:') && URL.revokeObjectURL(k.url)),
+    [],
+  );
 
   const [planned, setPlanned] = useState(initialPlan); // { planId, script }, finalised on the Script screen
   const [scriptState, setScriptState] = useState('ready');
   const [scriptError, setScriptError] = useState('');
   const [showScript, setShowScript] = useState(false);
-  const [shotIndex, setShotIndex] = useState(0);
+  // Resume on the first shot that still needs a take.
+  const [shotIndex, setShotIndex] = useState(() => {
+    const n = initialPlan?.script?.shots?.length ?? 0;
+    const next = Array.from({ length: n }, (_, i) => i).find((i) => !initialKept?.[i]);
+    return next ?? 0;
+  });
 
   const [visionState, setVisionState] = useState('loading'); // loading | ready | off
   const [tip, setTip] = useState(null); // { id, text }
@@ -579,7 +587,7 @@ export default function Camera({ shoot, planned: initialPlan, health, onClose })
     const result = take?.result;
     if (result?.id) keepTake(result.id).catch(() => {});
     const previous = kept[shotIndex];
-    if (previous && previous.url !== take.url) URL.revokeObjectURL(previous.url);
+    if (previous && previous.url !== take.url && previous.url.startsWith('blob:')) URL.revokeObjectURL(previous.url);
     const next = { ...kept, [shotIndex]: { takeId: Number(result?.id), blob: take.blob, url: take.url, result } };
     setKept(next);
     setTake(null);

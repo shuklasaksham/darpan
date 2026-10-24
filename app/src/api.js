@@ -36,6 +36,7 @@ export const saveScript = (planId, script) =>
 export const getBilling = () => request('/api/billing');
 export const startCheckout = () => postJson('/api/billing/checkout', {});
 export const reviewPlan = (planId) => postJson(`/api/plans/${planId}/review`, {});
+export const getRecent = () => request('/api/recent');
 export const checkFrame = (body) => postJson('/api/frame-check', body);
 export const keepTake = (id) => postJson(`/api/takes/${id}/keep`, {});
 export const makeReel = (body) => postJson('/api/reels', body);

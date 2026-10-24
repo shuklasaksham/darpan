@@ -17,6 +17,8 @@ services:
         sync: false
       - key: SARVAM_API_KEY
         sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
       - key: PINELABS_CLIENT_ID
         sync: false
       - key: PINELABS_CLIENT_SECRET

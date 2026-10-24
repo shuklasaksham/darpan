@@ -193,7 +193,7 @@ async function encodePiece({ take, trim, size, assPath, out, onProgress }) {
   const duration = trim.end - trim.start;
   const { width, height } = size;
   const video = [
-    `scale=${width}:${height}:force_original_aspect_ratio=increase:flags=lanczos`,
+    `scale=${width}:${height}:force_original_aspect_ratio=increase:flags=bicubic`,
     `crop=${width}:${height}`,
     'setsar=1',
     `fps=${FPS}`,
@@ -211,7 +211,8 @@ async function encodePiece({ take, trim, size, assPath, out, onProgress }) {
     '-map', take.has_audio ? '0:a:0' : '1:a:0',
     '-filter_threads', '1',
     '-vf', video,
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-profile:v', 'high', '-pix_fmt', 'yuv420p',
+    // ultrafast: ~2.6x quicker than veryfast on Render's small CPUs, at a larger file size.
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-profile:v', 'high', '-pix_fmt', 'yuv420p',
     '-r', String(FPS), '-g', String(FPS * 2), '-threads', '1', '-x264-params', 'rc-lookahead=10',
     '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2',
     '-video_track_timescale', '15360',
@@ -247,7 +248,11 @@ async function buildReel(reel, job) {
     if (reel.captions && claudeConfigured) {
       job.stage = 'Writing your captions';
       try {
-        hinglish = await hinglishCaptions(takes.map((t) => (t.words ?? []).map((w) => w.text)));
+        // Don't let caption spelling hold up the render: local transliteration after 8 s.
+        hinglish = await Promise.race([
+          hinglishCaptions(takes.map((t) => (t.words ?? []).map((w) => w.text))),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), 8000)),
+        ]);
       } catch (err) {
         console.error('Hinglish captions from Claude failed, transliterating:', err.message);
       }

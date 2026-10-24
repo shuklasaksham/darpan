@@ -37,7 +37,7 @@ export default function Reel({ shots, kept, onBack, onDone }) {
         setStatus({ progress: 0, stage: 'Re-sending some takes' });
         for (const id of err.body.missing) {
           const entry = Object.values(kept).find((k) => k.takeId === id);
-          if (!entry) throw new Error('A take is missing. Record that shot again.');
+          if (!entry?.blob) throw new Error('A take has expired on the server. Record that shot again.');
           await reuploadTake(id, entry.blob);
         }
         created = await makeReel({ takeIds, captions });

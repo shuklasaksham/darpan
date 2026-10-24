@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { getIdeas, getTrends, transcribe } from '../api.js';
 import { pickMimeType, stopStream } from '../media.js';
 import { PlanCard } from './Plan.jsx';
+import { RecentShoots } from './Recent.jsx';
 
 export const FORMATS = [
   'Talk to camera',
@@ -24,7 +25,7 @@ function savedLanguage() {
   }
 }
 
-export default function Home({ user, health, onShoot, onLogOut }) {
+export default function Home({ user, health, onShoot, onResume, onLogOut }) {
   const [idea, setIdea] = useState('');
   const [language, setLanguage] = useState(savedLanguage);
   const [cards, setCards] = useState(null); // null while loading
@@ -122,6 +123,8 @@ export default function Home({ user, health, onShoot, onLogOut }) {
           </div>
         </section>
       )}
+
+      <RecentShoots onResume={onResume} />
 
       <section className="stack">
         <h3>{typedIdea ? 'Shoot it as…' : 'Or pick a format'}</h3>
