@@ -83,6 +83,8 @@ app.get('/api/health', async (_req, res) => {
     ok: true,
     db,
     ffmpeg: await ffmpegAvailable(),
+    // 'persistent' when takes live on the Render Disk and survive redeploys.
+    storage: config.uploadDir.startsWith('/var/data') ? 'persistent' : 'temporary',
     director: directorConfigured,
     scripts: claudeConfigured,
     voice: Boolean(config.deepgramApiKey),
