@@ -683,3 +683,13 @@ td:nth-child(4) { white-space: normal; min-width: 140px; }
 .progress-dots { display: flex; gap: 4px; flex: none; }
 .progress-dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--border); }
 .progress-dots i.on { background: var(--marigold); }
+
+.upgrade-backdrop { position: fixed; inset: 0; z-index: 20; background: rgb(20 15 5 / 0.45); display: flex; align-items: flex-end; justify-content: center; }
+.upgrade-sheet { width: min(560px, 100%); display: flex; flex-direction: column; gap: 12px; padding: 22px 18px calc(22px + env(safe-area-inset-bottom)); border-radius: 24px 24px 0 0; background: var(--ink); color: #fff; }
+.upgrade-sheet .tag { align-self: flex-start; }
+.upgrade-sheet h2 { font-size: 2.6rem; }
+.upgrade-sheet h2 small { font-size: 1rem; font-weight: 600; opacity: 0.7; }
+.upgrade-sheet ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.upgrade-sheet li::before { content: '✓  '; color: var(--marigold); font-weight: 800; }
+.upgrade-sheet button.primary { background: var(--marigold); border-color: var(--marigold); color: #1a1206; }
+.upgrade-sheet .muted, .upgrade-sheet button.link { color: rgb(255 255 255 / 0.7); }
