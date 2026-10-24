@@ -86,7 +86,12 @@ export default function Admin() {
       <section className="stat-grid">
         <Stat label="Creators" value={t.users} sub={`+${t.users_7d} this week · ${t.dev_users ?? 0} dev`} />
         <Stat label="Active this week" value={t.active_7d} sub="recorded a take" />
-        <Stat label="Pro creators" value={t.pro_users} highlight />
+        <Stat
+          label="Pro creators"
+          value={t.pro_users}
+          sub={`${t.paying_users} paid${t.pro_dev_users ? ` · ${t.pro_dev_users} dev` : ''}`}
+          highlight
+        />
         <Stat label="Revenue this month" value={rupees(t.revenue_month_paise)} sub={`${rupees(t.revenue_paise)} all time`} highlight />
         <Stat label="Scripts" value={t.scripts} sub={`+${t.scripts_7d} this week`} />
         <Stat label="Takes" value={t.takes} sub={t.avg_score != null ? `avg ${(t.avg_score / 10).toFixed(1)}/10` : ''} />

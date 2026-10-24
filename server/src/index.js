@@ -16,7 +16,7 @@ import { checkFrame, ClaudeError, claudeConfigured, directorNotes, trendCards, w
 import { speak, TtsError, ttsConfigured } from './tts.js';
 import { limits } from './limits.js';
 import { adminRouter } from './admin.js';
-import { billingRouter, BillingError, planFor, startPaymentSweeper, webhookRouter } from './billing.js';
+import { billingRouter, BillingError, planFor, reconcilePro, startPaymentSweeper, webhookRouter } from './billing.js';
 
 fs.mkdirSync(config.uploadDir, { recursive: true });
 
@@ -579,6 +579,7 @@ app.use((err, _req, res, _next) => {
 });
 
 await migrate();
+await reconcilePro().catch((err) => console.error('Pro reconcile failed:', err.message));
 if (!directorConfigured) console.warn("AgenticOrg director is not configured: set AGENTICORG_API_KEY and AGENTICORG_DIRECTOR_AGENT_ID");
 sweepOldFiles().catch(() => {});
 startPaymentSweeper();

@@ -6,7 +6,7 @@ import { limit } from './limits.js';
 import { claudeConfigured } from './claude.js';
 import { directorConfigured } from './director.js';
 import { ttsConfigured } from './tts.js';
-import { paymentProvider, paymentsConfigured } from './billing.js';
+import { paymentProvider, paymentsConfigured, reconcilePro } from './billing.js';
 
 // Owner dashboard at /admin. Signed in with ADMIN_PASSWORD (set in Render),
 // separate from creator accounts; the session is a signed, httpOnly cookie.
@@ -68,6 +68,7 @@ adminRouter.get('/api/admin/stats', async (req, res, next) => {
   if (!isAdmin(req)) return res.status(401).json({ error: 'Please sign in' });
   if (!pool) return res.status(503).json({ error: 'No database' });
   try {
+    await reconcilePro();
     const one = async (sql) => (await pool.query(sql)).rows[0];
     const all = async (sql) => (await pool.query(sql)).rows;
     const [totals, daily, users, payments, reels, takes] = await Promise.all([
@@ -75,7 +76,9 @@ adminRouter.get('/api/admin/stats', async (req, res, next) => {
         (SELECT count(*)::int FROM users WHERE NOT ${DEV}) AS users,
         (SELECT count(*)::int FROM users WHERE ${DEV}) AS dev_users,
         (SELECT count(*)::int FROM users WHERE NOT ${DEV} AND created_at > now() - interval '7 days') AS users_7d,
-        (SELECT count(*)::int FROM users WHERE NOT ${DEV} AND pro_until > now()) AS pro_users,
+        (SELECT count(*)::int FROM users WHERE pro_until > now()) AS pro_users,
+        (SELECT count(*)::int FROM users WHERE ${DEV} AND pro_until > now()) AS pro_dev_users,
+        (SELECT count(DISTINCT user_id)::int FROM payments WHERE status = 'paid') AS paying_users,
         (SELECT count(*)::int FROM shoot_plans) AS scripts,
         (SELECT count(*)::int FROM shoot_plans WHERE created_at > now() - interval '7 days') AS scripts_7d,
         (SELECT count(*)::int FROM takes) AS takes,

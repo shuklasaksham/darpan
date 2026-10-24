@@ -57,6 +57,22 @@ export async function planFor(userId) {
   return { plan, proUntil: row?.pro_until ?? null, reelsThisMonth: row?.reels_this_month ?? 0, ...PLANS[plan] };
 }
 
+/**
+ * Makes sure everyone with a paid Pro payment actually has Pro: at least 30
+ * days from their latest payment. Safe to run any number of times.
+ */
+export async function reconcilePro() {
+  const { rowCount } = await pool.query(
+    `UPDATE users u SET pro_until = p.paid_until
+     FROM (SELECT user_id, max(coalesce(paid_at, created_at)) + make_interval(days => $1) AS paid_until
+           FROM payments WHERE status = 'paid' GROUP BY user_id) p
+     WHERE u.id = p.user_id AND (u.pro_until IS NULL OR u.pro_until < p.paid_until)`,
+    [PRO_DAYS],
+  );
+  if (rowCount) console.log(`Pro switched on for ${rowCount} creator(s) with paid payments`);
+  return rowCount;
+}
+
 // --- Pine Labs API -----------------------------------------------------------
 
 let token = null; // { value, expiresAt }
