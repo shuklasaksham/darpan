@@ -6,7 +6,7 @@ import { limit } from './limits.js';
 import { claudeConfigured } from './claude.js';
 import { directorConfigured } from './director.js';
 import { ttsConfigured } from './tts.js';
-import { paymentsConfigured } from './billing.js';
+import { paymentProvider, paymentsConfigured } from './billing.js';
 
 // Owner dashboard at /admin. Signed in with ADMIN_PASSWORD (set in Render),
 // separate from creator accounts; the session is a signed, httpOnly cookie.
@@ -110,8 +110,8 @@ adminRouter.get('/api/admin/stats', async (req, res, next) => {
         agenticorg: directorConfigured,
         deepgram: Boolean(config.deepgramApiKey),
         sarvam: ttsConfigured,
-        pinelabs: paymentsConfigured,
-        pinelabsEnv: config.pinelabsEnv,
+        payments: paymentsConfigured,
+        paymentProvider: paymentProvider ?? 'none',
       },
     });
   } catch (err) {

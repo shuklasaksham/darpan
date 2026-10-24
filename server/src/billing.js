@@ -4,7 +4,8 @@ import { config } from './config.js';
 import { pool } from './db.js';
 import { requireUser } from './auth.js';
 
-// Free and Pro plans, paid through Pine Labs Online (Plural) hosted checkout.
+// Free and Pro plans, paid through Razorpay Checkout or Pine Labs Online
+// (Plural) hosted checkout. Razorpay is used when its keys are set.
 // Pro is a 30-day pass (₹299); paying again extends it. Auto-renewing
 // subscriptions need Pine Labs' UPI Autopay/mandates, a separate integration.
 
@@ -16,7 +17,10 @@ const PRO_DAYS = 30;
 
 const BASE = config.pinelabsEnv === 'production' ? 'https://api.pluralpay.in' : 'https://pluraluat.v2.pinepg.in';
 const baseUrl = () => config.pinelabsBaseUrl || BASE;
-export const paymentsConfigured = Boolean(config.pinelabsClientId && config.pinelabsClientSecret && config.publicUrl);
+const razorpayConfigured = Boolean(config.razorpayKeyId && config.razorpayKeySecret);
+const pinelabsConfigured = Boolean(config.pinelabsClientId && config.pinelabsClientSecret && config.publicUrl);
+export const paymentProvider = razorpayConfigured ? 'razorpay' : pinelabsConfigured ? 'pinelabs' : null;
+export const paymentsConfigured = Boolean(paymentProvider);
 
 export class BillingError extends Error {
   constructor(message, status = 502) {
@@ -86,19 +90,36 @@ async function pinelabs(path, { method = 'GET', body } = {}) {
   return json;
 }
 
-/** Asks Pine Labs for the order's status and, if paid, grants Pro (once). */
+/**
+ * Asks the payment provider for the order's status and, if paid, grants Pro
+ * (once). Every path (return, popup, webhook, sweeper) comes through here.
+ */
 export async function settle(reference) {
   const { rows } = await pool.query('SELECT * FROM payments WHERE merchant_order_reference = $1', [reference]);
   const payment = rows[0];
   if (!payment) return null;
   if (payment.status === 'paid') return 'paid';
 
-  const json = await pinelabs(`/api/pay/v1/orders/reference/${encodeURIComponent(reference)}`);
-  const order = json.data ?? json;
-  const status = String(order.status ?? '').toUpperCase();
-  const amount = Number(order.order_amount?.value);
-  const paid = config.pinelabsPaidStatuses.includes(status) && (!amount || amount === payment.amount_paise);
+  let status;
+  let paid;
+  let raw;
+  if (payment.provider === 'razorpay') {
+    const order = await razorpay(`/v1/orders/${encodeURIComponent(payment.pine_order_id)}`);
+    status = String(order.status ?? '').toUpperCase(); // CREATED, ATTEMPTED, PAID
+    paid = status === 'PAID' && Number(order.amount_paid ?? order.amount) === payment.amount_paise;
+    raw = order;
+  } else {
+    const json = await pinelabs(`/api/pay/v1/orders/reference/${encodeURIComponent(reference)}`);
+    raw = json.data ?? json;
+    status = String(raw.status ?? '').toUpperCase();
+    const amount = Number(raw.order_amount?.value);
+    paid = config.pinelabsPaidStatuses.includes(status) && (!amount || amount === payment.amount_paise);
+  }
+  return record(reference, { paid, status, raw });
+}
 
+async function record(reference, { paid, status, raw }) {
+  const order = raw;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -138,6 +159,51 @@ function verifyWebhook(req) {
   });
 }
 
+// --- Razorpay ----------------------------------------------------------------
+
+async function razorpay(path, { method = 'GET', body } = {}) {
+  const auth = Buffer.from(`${config.razorpayKeyId}:${config.razorpayKeySecret}`).toString('base64');
+  const res = await fetch(`${config.razorpayBaseUrl}${path}`, {
+    method,
+    headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
+    body: body && JSON.stringify(body),
+    signal: AbortSignal.timeout(20_000),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    console.error('Razorpay error', method, path, res.status, JSON.stringify(json).slice(0, 500));
+    throw new BillingError('Payments are unavailable right now');
+  }
+  return json;
+}
+
+const hmacHex = (secret, text) => createHmac('sha256', secret).update(text).digest('hex');
+const sameHex = (a, b) => {
+  const x = Buffer.from(String(a), 'utf8');
+  const y = Buffer.from(String(b), 'utf8');
+  return x.length === y.length && timingSafeEqual(x, y);
+};
+
+/** Razorpay webhook: signed with the webhook secret over the raw body. */
+async function razorpayWebhook(req, res) {
+      const signature = req.get('x-razorpay-signature');
+      if (!config.razorpayWebhookSecret || !signature || !sameHex(signature, hmacHex(config.razorpayWebhookSecret, req.body))) {
+        return res.status(401).json({ error: 'Bad signature' });
+      }
+      try {
+        const event = JSON.parse(req.body.toString('utf8'));
+        const orderId = event.payload?.order?.entity?.id ?? event.payload?.payment?.entity?.order_id;
+        if (orderId) {
+          const { rows } = await pool.query("SELECT merchant_order_reference FROM payments WHERE provider = 'razorpay' AND pine_order_id = $1", [orderId]);
+          if (rows[0]) await settle(rows[0].merchant_order_reference);
+        }
+        res.json({ ok: true });
+      } catch (err) {
+        console.error('Razorpay webhook failed:', err.message);
+        res.status(500).json({ error: 'Webhook failed' });
+      }
+}
+
 // --- Routes ------------------------------------------------------------------
 
 /** Mounted before express.json(): the webhook signature covers the raw body. */
@@ -155,6 +221,8 @@ webhookRouter.post('/api/billing/webhook', express.raw({ type: '*/*', limit: '1m
   }
 });
 
+webhookRouter.post('/api/billing/razorpay/webhook', express.raw({ type: '*/*', limit: '1mb' }), razorpayWebhook);
+
 export const billingRouter = express.Router();
 
 billingRouter.get('/api/billing', requireUser, async (req, res, next) => {
@@ -167,6 +235,7 @@ billingRouter.get('/api/billing', requireUser, async (req, res, next) => {
       reelsPerMonth: Number.isFinite(p.reelsPerMonth) ? p.reelsPerMonth : null,
       priceRupees: config.proPricePaise / 100,
       paymentsEnabled: paymentsConfigured,
+      provider: paymentProvider,
     });
   } catch (err) {
     next(err);
@@ -175,6 +244,35 @@ billingRouter.get('/api/billing', requireUser, async (req, res, next) => {
 
 billingRouter.post('/api/billing/checkout', requireUser, async (req, res, next) => {
   if (!paymentsConfigured) return res.status(503).json({ error: 'Payments are not set up yet' });
+  if (paymentProvider === 'razorpay') {
+    // Razorpay: create an order here; the app opens Razorpay Checkout with it.
+    try {
+      const reference = `darpan-${req.user.id}-${Date.now()}`;
+      const order = await razorpay('/v1/orders', {
+        method: 'POST',
+        body: {
+          amount: config.proPricePaise,
+          currency: 'INR',
+          receipt: reference,
+          notes: { user_id: String(req.user.id), plan: `pro-${PRO_DAYS}d` },
+        },
+      });
+      await pool.query(
+        'INSERT INTO payments (user_id, merchant_order_reference, pine_order_id, amount_paise, status, provider) VALUES ($1, $2, $3, $4, $5, $6)',
+        [req.user.id, reference, order.id, config.proPricePaise, 'pending', 'razorpay'],
+      );
+      return res.json({
+        provider: 'razorpay',
+        keyId: config.razorpayKeyId,
+        orderId: order.id,
+        amount: config.proPricePaise,
+        currency: 'INR',
+        name: req.user.name,
+      });
+    } catch (err) {
+      return next(err);
+    }
+  }
   try {
     const reference = `darpan-${req.user.id}-${Date.now()}`;
     await pool.query(
@@ -201,6 +299,27 @@ billingRouter.post('/api/billing/checkout', requireUser, async (req, res, next) 
     ]);
     if (!order.redirect_url) throw new BillingError('Payments are unavailable right now');
     res.json({ redirectUrl: order.redirect_url });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Razorpay Checkout's success handler posts here; the signature proves the
+// payment belongs to our order, then Razorpay's order API confirms it's paid.
+billingRouter.post('/api/billing/razorpay/verify', requireUser, async (req, res, next) => {
+  const { razorpay_order_id: orderId, razorpay_payment_id: paymentId, razorpay_signature: signature } = req.body ?? {};
+  if (!orderId || !paymentId || !signature) return res.status(400).json({ error: 'Missing payment details' });
+  if (!sameHex(signature, hmacHex(config.razorpayKeySecret, `${orderId}|${paymentId}`))) {
+    return res.status(400).json({ error: 'Payment could not be verified' });
+  }
+  try {
+    const { rows } = await pool.query(
+      "SELECT merchant_order_reference FROM payments WHERE provider = 'razorpay' AND pine_order_id = $1 AND user_id = $2",
+      [orderId, req.user.id],
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Order not found' });
+    const outcome = await settle(rows[0].merchant_order_reference);
+    res.json({ status: outcome === 'paid' ? 'success' : 'pending' });
   } catch (err) {
     next(err);
   }

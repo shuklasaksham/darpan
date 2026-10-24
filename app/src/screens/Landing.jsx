@@ -61,7 +61,7 @@ export default function Landing({ onSignUp, onLogIn }) {
             <button className="primary" onClick={() => onSignUp('pro')}>Go Pro</button>
           </div>
         </div>
-        <p className="muted small center-text">Secure payments by Pine Labs. UPI, cards and netbanking. Cancel anytime.</p>
+        <p className="muted small center-text">Secure payments by Razorpay. UPI, cards and netbanking. No auto-renewal.</p>
       </section>
 
       <footer className="landing-footer">

@@ -116,11 +116,11 @@ export default function Admin() {
         <h3>Services</h3>
         <div className="chips">
           {Object.entries(data.services)
-            .filter(([k]) => k !== 'pinelabsEnv')
+            .filter(([k]) => k !== 'paymentProvider')
             .map(([name, ok]) => (
               <span key={name} className={`chip ${ok ? 'ok' : 'off'}`}>
                 {ok ? '●' : '○'} {name}
-                {name === 'pinelabs' && ok ? ` (${data.services.pinelabsEnv})` : ''}
+                {name === 'payments' && ok ? ` (${data.services.paymentProvider})` : ''}
               </span>
             ))}
         </div>

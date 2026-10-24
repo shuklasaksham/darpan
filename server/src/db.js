@@ -74,6 +74,7 @@ export async function migrate() {
       raw JSONB,
       paid_at TIMESTAMPTZ
     );
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'pinelabs';
     CREATE TABLE IF NOT EXISTS reels (
       id BIGSERIAL PRIMARY KEY,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),

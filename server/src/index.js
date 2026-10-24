@@ -38,10 +38,12 @@ app.use(compression());
 // and reels play from blob: URLs; React sets some inline styles.
 const CSP = [
   "default-src 'self'",
-  "script-src 'self' 'wasm-unsafe-eval'",
+  // Razorpay Checkout loads its script and opens in an iframe.
+  "script-src 'self' 'wasm-unsafe-eval' https://checkout.razorpay.com",
+  "frame-src https://api.razorpay.com https://checkout.razorpay.com",
   "worker-src 'self' blob:",
-  "connect-src 'self' blob: data:",
-  "img-src 'self' blob: data:",
+  "connect-src 'self' blob: data: https://api.razorpay.com https://lumberjack.razorpay.com",
+  "img-src 'self' blob: data: https://cdn.razorpay.com",
   "media-src 'self' blob: data:",
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self'",

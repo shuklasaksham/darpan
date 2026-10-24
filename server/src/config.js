@@ -12,6 +12,11 @@ export const config = {
   // A Bulbul v3 voice; see Sarvam's docs for others (shubh, aditya, ritu, neha...).
   sarvamSpeaker: process.env.SARVAM_SPEAKER || 'priya',
   adminPassword: process.env.ADMIN_PASSWORD,
+  // Razorpay (used for Pro when its keys are set).
+  razorpayKeyId: process.env.RAZORPAY_KEY_ID,
+  razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET,
+  razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
+  razorpayBaseUrl: process.env.RAZORPAY_BASE_URL || 'https://api.razorpay.com',
   // Pine Labs Online (Plural) payments for Pro.
   pinelabsClientId: process.env.PINELABS_CLIENT_ID,
   pinelabsClientSecret: process.env.PINELABS_CLIENT_SECRET,

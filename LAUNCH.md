@@ -11,7 +11,15 @@ What's needed to put Darpan in real users' hands.
 - **AgenticOrg** (required): API key and the director agent's ID. The director reviews every script and suggests ideas.
 - Set spending limits/alerts in each dashboard.
 
-## Payments (Pine Labs)
+## Payments (Razorpay)
+
+- Razorpay Dashboard → Account & Settings → API Keys: set `RAZORPAY_KEY_ID` and
+  `RAZORPAY_KEY_SECRET` in Render (test keys `rzp_test_…` first, live keys after KYC).
+- Razorpay Dashboard → Webhooks → Add: URL `https://<your-domain>/api/billing/razorpay/webhook`,
+  events `order.paid` and `payment.captured`, and a secret you set as `RAZORPAY_WEBHOOK_SECRET`.
+- When Razorpay keys are set, Razorpay is used; otherwise Pine Labs (below) if configured.
+
+## Payments (Pine Labs, alternative)
 
 - In the Pine Labs Online dashboard, Settings → API Keys: set `PINELABS_CLIENT_ID`
   and `PINELABS_CLIENT_SECRET` in Render; start with `PINELABS_ENV=uat`.

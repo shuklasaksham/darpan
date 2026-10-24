@@ -35,6 +35,7 @@ export const saveScript = (planId, script) =>
   request(`/api/plans/${planId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ script }) });
 export const getBilling = () => request('/api/billing');
 export const startCheckout = () => postJson('/api/billing/checkout', {});
+export const verifyRazorpay = (body) => postJson('/api/billing/razorpay/verify', body);
 export const reviewPlan = (planId) => postJson(`/api/plans/${planId}/review`, {});
 export const getRecent = () => request('/api/recent');
 export const checkFrame = (body) => postJson('/api/frame-check', body);
