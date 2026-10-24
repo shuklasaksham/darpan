@@ -23,6 +23,7 @@ RUN npm ci --omit=dev
 COPY server/src ./src
 COPY --from=app-build /build/app/dist /srv/app/dist
 
-USER node
 EXPOSE 3000
-CMD ["node", "src/index.js"]
+# Start as root only to hand the Render Disk (mounted root-owned at /var/data)
+# to the unprivileged node user, then run the app as node.
+CMD ["sh", "-c", "if [ -d /var/data ]; then chown node:node /var/data; fi; exec runuser -u node -- node src/index.js"]
