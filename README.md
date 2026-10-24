@@ -26,11 +26,12 @@ needs HTTPS outside localhost, so test recording on the deployed site.
 | Name | Purpose |
 | --- | --- |
 | `DATABASE_URL` | Render Postgres connection string |
-| `ANTHROPIC_API_KEY` | Claude API |
-| `DEEPGRAM_API_KEY` | Deepgram speech-to-text |
-| `SARVAM_API_KEY` | Sarvam AI (Indian languages) |
-| `AGENTICORG_API_KEY` | AgenticOrg workspace API key (`ao_sk_...`); needs access to run the director agent |
-| `AGENTICORG_DIRECTOR_AGENT_ID` | UUID of the director agent in AgenticOrg |
+| `ANTHROPIC_API_KEY` | Claude: scripts, frame checks, director's notes |
+| `DEEPGRAM_API_KEY` | Deepgram: spoken ideas and take transcripts |
+| `SARVAM_API_KEY` | Sarvam Bulbul voice for spoken tips and notes |
+| `SARVAM_SPEAKER` | Optional Bulbul v3 voice (default `priya`) |
+| `AGENTICORG_API_KEY` | Optional AgenticOrg key (`ao_sk_...`) for idea suggestions |
+| `AGENTICORG_DIRECTOR_AGENT_ID` | Optional UUID of the AgenticOrg ideas agent |
 | `AGENTICORG_BASE_URL` | Optional; defaults to `https://app.agenticorg.ai` |
 | `UPLOAD_DIR` | Optional; where uploads are written (default: OS temp dir) |
 | `MAX_UPLOAD_MB` | Optional; upload size cap (default 200) |
@@ -48,56 +49,110 @@ lock the account for 15 minutes. Sessions are random tokens in an httpOnly
 cookie, stored hashed in the `sessions` table for 30 days. With only 10,000
 possible PINs, the lockout is the real protection; don't relax it.
 
-Gender and niche are sent to the director so Hindi lines use the right verb
-forms ("main karti hoon" / "main karta hoon") and ideas fit the creator.
+Gender and niche go to Claude so Hindi lines use the right verb forms ("main
+karti hoon" / "main karta hoon", or no gendered forms for "prefer not to say")
+and scripts fit the creator.
 
-## Shooting
+## Ideas
 
 The home screen has a text box and a mic. Whatever is in the text box is used
 as the idea, word for word. "Shoot this idea", a format chip or a suggested idea
-opens the in-app camera right away, and the director plans shots while it warms
-up. Takes are recorded with `MediaRecorder` and uploaded to `/api/takes`.
+opens the camera right away.
 
 The mic records audio in the browser and sends it to `/api/transcribe`, which
 streams it from disk to Deepgram Nova-3 with `language=multi` and Hindi/English
 hints. Browser speech recognition is deliberately not used because it garbles
 Hinglish. Deepgram may write Hindi words in Devanagari.
 
-## AI director (AgenticOrg)
+## Script (Claude)
 
-The director that plans shoots, recommends shots and reviews takes is an agent
-in your [AgenticOrg](https://agenticorg.ai) workspace. The server calls it with
-the `agenticorg-sdk` package (`server/src/director.js`), running the agent by
-ID with one of three actions. Each call also sends the expected JSON shape in
-`context.output_format`.
+When the camera opens, `/api/script` asks Claude (`server/src/claude.js`) for a
+script and shot plan while the camera warms up:
 
-| Action | When | Expected output |
-| --- | --- | --- |
-| `suggest_ideas` | Home screen loads | `{ ideas: [{ title, format, why }] }` |
-| `plan_shoot` | Camera opens for an idea and/or format | `{ title, hook, shots: [{ title, framing, duration_seconds, say, tips }], caption, hashtags }` |
-| `recommend_shot` | "What should I shoot next?" | `{ shot: {...}, why }` |
-| `review_take` | A take is uploaded for a planned shot | `{ verdict: "keep" | "retake", praise, fixes, next_step }` |
+1. Claude's web search looks up what's trending in Indian Reels for the
+   creator's niche (cached per niche for 6 hours).
+2. Claude writes 1–6 shots, only as many as the idea needs. Each has a line to
+   say in Hindi (Devanagari), Hinglish (Roman) or English with gendered verbs
+   matching the creator, a framing (close-up, chest up, waist up, full body), a
+   pose, a direction and a length; plus background and lighting suggestions for
+   the niche and script.
 
-To set it up:
+All Claude calls use `claude-opus-5-5` with structured JSON output and the
+server-side refusal fallback (`fallbacks: "default"`). Without
+`ANTHROPIC_API_KEY` the camera still works with a one-shot plan built from the
+idea.
 
-1. In AgenticOrg, create an agent (for example with **Generate agent**) using
-   the brief below, and note its agent ID.
-2. Under **Settings → API Keys**, create a key that can run that agent.
-3. Set `AGENTICORG_API_KEY` and `AGENTICORG_DIRECTOR_AGENT_ID`.
+## Camera coaching
 
-> You are Darpan's AI director for first-time Indian creators shooting vertical
-> reels on a phone. Reply only with JSON in the shape given in
-> `context.output_format`. Use the creator's gender for Hindi verb forms. For
-> `suggest_ideas`, suggest reel ideas that fit `creator_niche`. For `plan_shoot`,
-> keep the creator's idea exactly as given and turn it (and the `format`, if any) into a short shot
-> list with a strong 1–3 second hook, simple phone-friendly framing, and lines
-> to say in the requested language. For `recommend_shot`, suggest the single
-> best next shot given the plan and shots already done. For `review_take`,
-> compare the take's duration and orientation with the planned shot and give
-> warm, specific, encouraging feedback.
+A full-screen 9:16 camera (switchable to 4:5, 1:1 or 16:9) shows the line as a
+teleprompter at the top near the lens, and a Photogenik-style pose silhouette
+for the shot that turns green when framing is right. Live checks run on the
+phone about 8 times a second (`app/src/camera/`):
 
-Without these two variables the app still runs: it shows a plain "Record a
-take" button and `/api/health` reports `director: false`.
+- **Face**: MediaPipe face detection on the CPU delegate (not GPU), looking in
+  the silhouette's head area first, then the whole frame. The runtime and models
+  are served by this app (downloaded at build time by
+  `app/scripts/prepare-mediapipe.mjs`).
+- **Framing**: from the eye line and the estimated top of the head (about as far
+  above the eyes as the chin is below). Face low → "lower the phone"; head cut
+  off or no headroom → "raise the phone"; plus come closer / move back / step
+  left or right. Full-body and waist-up shots also use MediaPipe pose: feet in
+  frame, head not cut off, body big enough.
+- **Light**: only the middle of the face (between the eyes and the mouth), plus
+  whole-frame exposure, contrast, clipping and sharpness. "Light is behind you"
+  only when the face is dark *and* much darker than the background, so a bright
+  wall doesn't count as a window.
+- **Sound**: mic level, background-noise floor and clipping.
+
+A problem has to last 1.5 seconds before Darpan mentions it, and only the most
+important one is shown and spoken, one at a time, in an Indian voice (Sarvam
+Bulbul via `/api/tts`, falling back to the phone's own voice). Tips are spoken
+only between takes; while recording they're shown silently.
+
+Once the basics pass, one frame goes to Claude (`/api/frame-check`) to judge
+light, framing, background clutter and camera angle. If a light warning keeps
+coming back, Claude looks too, and its verdict wins over the on-device reading
+until the light changes.
+
+Open the app with `?debug` to see every number live (face position, targets,
+face/background brightness, sharpness, sound levels, problem timers, Claude's
+verdicts) with overlays on the camera. Thresholds live in
+`app/src/camera/checks.js` and `app/src/camera/framing.js`; tune them on real
+phones with `?debug`.
+
+## Takes and director's notes
+
+Recording starts after a 3-2-1 countdown and records the cropped canvas (so the
+file has the chosen aspect ratio and isn't mirrored) plus the mic. While
+recording, the phone samples loudness 10 times a second, where the eyes point
+(MediaPipe face landmarks, front camera only), and a small frame every second.
+
+Each take goes to `/api/takes` with that data and three frames (start, middle,
+end). The server extracts the audio with ffmpeg, transcribes it with Deepgram
+keeping filler words, and measures the beginner mistakes
+(`server/src/analyze.js`): a slow first 2 seconds or a "hi guys" opener, a flat
+voice or trailing off at line ends, looking at the screen instead of the lens,
+a cut-off last word, fillers like "umm" and "matlab", and going over the planned
+length. Claude then writes up to 3 director's notes from the transcript,
+measurements and frames; without Claude, the rules write them. The take plays
+back with a score and the notes, Darpan reads the top note aloud, and "Keep &
+next" goes straight to the next shot.
+
+Deepgram documents `filler_words=true` for English; Hindi fillers like "matlab"
+are ordinary words, so they're transcribed either way.
+
+## Idea suggestions (AgenticOrg, optional)
+
+The "Ideas for your niche" list on the home screen comes from an agent in your
+[AgenticOrg](https://agenticorg.ai) workspace, run by ID with the action
+`suggest_ideas` and expected to return `{ ideas: [{ title, format, why }] }`. Set
+`AGENTICORG_API_KEY` and `AGENTICORG_DIRECTOR_AGENT_ID` to turn it on; without
+them the list is hidden. Suggested brief for the agent:
+
+> You suggest reel ideas for Darpan, an app for first-time Indian creators
+> shooting vertical reels on a phone. Reply only with JSON in the shape given in
+> `context.output_format`. Suggest ideas that fit `creator_niche`, in the
+> requested language.
 
 ## Uploads
 

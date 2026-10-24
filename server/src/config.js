@@ -8,6 +8,9 @@ export const config = {
   deepgramApiKey: process.env.DEEPGRAM_API_KEY,
   deepgramBaseUrl: process.env.DEEPGRAM_BASE_URL || 'https://api.deepgram.com',
   sarvamApiKey: process.env.SARVAM_API_KEY,
+  sarvamBaseUrl: process.env.SARVAM_BASE_URL || 'https://api.sarvam.ai',
+  // A Bulbul v3 voice; see Sarvam's docs for others (shubh, aditya, ritu, neha...).
+  sarvamSpeaker: process.env.SARVAM_SPEAKER || 'priya',
   agenticorgApiKey: process.env.AGENTICORG_API_KEY,
   agenticorgDirectorAgentId: process.env.AGENTICORG_DIRECTOR_AGENT_ID,
   agenticorgBaseUrl: process.env.AGENTICORG_BASE_URL || 'https://app.agenticorg.ai',

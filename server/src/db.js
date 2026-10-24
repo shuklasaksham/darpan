@@ -52,6 +52,11 @@ export async function migrate() {
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS review JSONB;
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id) ON DELETE CASCADE;
     ALTER TABLE shoot_plans ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id) ON DELETE CASCADE;
+    ALTER TABLE takes ADD COLUMN IF NOT EXISTS transcript TEXT;
+    ALTER TABLE takes ADD COLUMN IF NOT EXISTS score INT;
+    ALTER TABLE takes ADD COLUMN IF NOT EXISTS notes JSONB;
+    ALTER TABLE takes ADD COLUMN IF NOT EXISTS features JSONB;
+    ALTER TABLE takes ADD COLUMN IF NOT EXISTS notes_source TEXT;
     DELETE FROM sessions WHERE expires_at < now();
   `);
 }

@@ -2,6 +2,7 @@ import { AgenticOrg } from 'agenticorg-sdk';
 import { config } from './config.js';
 
 // The AI director is an agent in the AgenticOrg workspace, run by its agent ID.
+// It suggests ideas; Claude writes the scripts and the notes on takes (see claude.js).
 // Every call sends an `action` plus inputs; the agent's brief (see README)
 // tells it what each action should return.
 const client = config.agenticorgApiKey
@@ -23,12 +24,6 @@ export class DirectorError extends Error {
 
 const OUTPUT_FORMATS = {
   suggest_ideas: 'JSON: { ideas: [{ title, format, why }] } with 4-6 ideas',
-  plan_shoot:
-    'JSON: { title, hook, shots: [{ title, framing, duration_seconds, say, tips: [string] }], caption, hashtags: [string] }',
-  recommend_shot:
-    'JSON: { shot: { title, framing, duration_seconds, say, tips: [string] }, why }',
-  review_take:
-    'JSON: { verdict: "keep" | "retake", praise: [string], fixes: [string], next_step }',
 };
 
 async function ask(action, inputs) {
@@ -67,23 +62,4 @@ const creatorInputs = (creator) => ({
 
 export function suggestIdeas({ creator, language }) {
   return ask('suggest_ideas', { ...creatorInputs(creator), language: language || 'Hinglish' });
-}
-
-export function planShoot({ creator, idea, format, language, durationSeconds }) {
-  return ask('plan_shoot', {
-    ...creatorInputs(creator),
-    // The creator's own words, used exactly as typed or spoken.
-    idea,
-    format,
-    language: language || 'Hinglish',
-    target_duration_seconds: durationSeconds || 30,
-  });
-}
-
-export function recommendShot({ creator, plan, shotsDone, situation }) {
-  return ask('recommend_shot', { ...creatorInputs(creator), plan, shots_done: shotsDone, situation });
-}
-
-export function reviewTake({ creator, shot, take }) {
-  return ask('review_take', { ...creatorInputs(creator), shot, take });
 }

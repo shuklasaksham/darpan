@@ -2,12 +2,15 @@
   "name": "darpan-app",
   "version": "1.0.0",
   "scripts": {
+    "predev": "node scripts/prepare-mediapipe.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/prepare-mediapipe.mjs",
     "build": "vite build",
     "preview": "vite preview"
   },
   "type": "module",
   "dependencies": {
+    "@mediapipe/tasks-vision": "1.1.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },

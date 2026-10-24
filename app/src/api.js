@@ -29,8 +29,8 @@ export const logIn = (username, pin) => postJson('/api/auth/login', { username, 
 export const logOut = () => postJson('/api/auth/logout', {});
 
 export const getIdeas = (language) => request(`/api/director/ideas?language=${encodeURIComponent(language)}`);
-export const planShoot = (brief) => postJson('/api/director/plan', brief);
-export const nextShot = (body) => postJson('/api/director/next', body);
+export const writeScript = (brief) => postJson('/api/script', brief);
+export const checkFrame = (body) => postJson('/api/frame-check', body);
 
 export function transcribe(blob, language) {
   const body = new FormData();
@@ -39,8 +39,12 @@ export function transcribe(blob, language) {
   return request('/api/transcribe', { method: 'POST', body });
 }
 
-export function uploadTake(blob, { planId, plan, shotIndex, durationSeconds } = {}) {
+export function uploadTake(blob, { planId, plan, shotIndex, durationSeconds, language, loudness, gaze, frames } = {}) {
   const body = new FormData();
+  if (language) body.append('language', language);
+  if (loudness?.length) body.append('loudness', JSON.stringify(loudness));
+  if (gaze?.length) body.append('gaze', JSON.stringify(gaze));
+  if (frames?.length) body.append('frames', JSON.stringify(frames));
   if (planId) body.append('planId', planId);
   else if (plan) body.append('plan', JSON.stringify(plan));
   if (shotIndex !== undefined) body.append('shotIndex', shotIndex);

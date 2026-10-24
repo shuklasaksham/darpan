@@ -14,6 +14,7 @@ export async function probe(filePath) {
   const info = JSON.parse(stdout);
   const video = info.streams.find((s) => s.codec_type === 'video');
   return {
+    hasAudio: info.streams.some((s) => s.codec_type === 'audio'),
     durationSeconds: Number(info.format.duration) || null,
     width: video?.width ?? null,
     height: video?.height ?? null,
@@ -27,4 +28,10 @@ export async function ffmpegAvailable() {
   } catch {
     return false;
   }
+}
+
+/** Pulls a take's audio out as 16 kHz mono WAV for transcription. */
+export async function extractAudio(inputPath, outputPath) {
+  await run('ffmpeg', ['-v', 'error', '-y', '-i', inputPath, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', outputPath]);
+  return outputPath;
 }

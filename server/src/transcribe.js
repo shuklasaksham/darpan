@@ -18,9 +18,19 @@ export class TranscribeError extends Error {
 
 /** Streams an audio file from disk to Deepgram and returns the transcript. */
 export async function transcribeFile(filePath, mimeType, language = 'Hinglish') {
+  return (await transcribeWithWords(filePath, mimeType, language)).transcript;
+}
+
+/**
+ * Like transcribeFile, but also returns word timings. With `keepFillers`,
+ * "um" and "uh" stay in (Deepgram drops them by default; its docs only promise
+ * this for English, but Hindi fillers like "matlab" are ordinary words anyway).
+ */
+export async function transcribeWithWords(filePath, mimeType, language = 'Hinglish', { keepFillers = false } = {}) {
   if (!config.deepgramApiKey) throw new TranscribeError('Voice input is not set up yet', 503);
 
   const params = new URLSearchParams({ model: 'nova-3', language: 'multi', smart_format: 'true' });
+  if (keepFillers) params.set('filler_words', 'true');
   for (const hint of LANGUAGE_HINTS[language] ?? LANGUAGE_HINTS.Hinglish) params.append('language_hint', hint);
 
   let res;
@@ -44,5 +54,14 @@ export async function transcribeFile(filePath, mimeType, language = 'Hinglish') 
     throw new TranscribeError("Couldn't understand that recording. Try again or type your idea.");
   }
   const json = await res.json();
-  return json.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim() ?? '';
+  const alt = json.results?.channels?.[0]?.alternatives?.[0];
+  return {
+    transcript: alt?.transcript?.trim() ?? '',
+    words: (alt?.words ?? []).map((w) => ({
+      word: w.word,
+      text: w.punctuated_word ?? w.word,
+      start: w.start,
+      end: w.end,
+    })),
+  };
 }
