@@ -22,11 +22,19 @@ export class DirectorError extends Error {
   }
 }
 
+// Hinglish means Roman script; agents otherwise tend to drift into Devanagari.
+const SCRIPT = {
+  Hinglish: 'Write in Hinglish using Roman (English) letters only, no Devanagari.',
+  Hindi: 'Write in Hindi using Devanagari.',
+  English: 'Write in simple Indian English.',
+};
+const scriptRule = (language) => SCRIPT[language] ?? SCRIPT.Hinglish;
+
 const TASKS = {
   review_script: (i) =>
-    `Review this reel script for a first-time Indian creator (niche: ${i.creator_niche}, language: ${i.language}) and reply only with JSON { "notes": [up to 3 short, specific suggestions] }. Script: ${JSON.stringify(i.script)}`,
+    `Review this reel script for a first-time Indian creator (niche: ${i.creator_niche}, language: ${i.language}) and reply only with JSON { "notes": [up to 3 short, specific suggestions] }. ${scriptRule(i.language)} Script: ${JSON.stringify(i.script)}`,
   suggest_ideas: (i) =>
-    `Suggest 4-6 reel ideas for a first-time Indian creator in the niche "${i.creator_niche}", in ${i.language}. Reply only with JSON { "ideas": [{ "title", "format", "why" }] }.`,
+    `Suggest 4-6 reel ideas for a first-time Indian creator in the niche "${i.creator_niche}", in ${i.language}. ${scriptRule(i.language)} Reply only with JSON { "ideas": [{ "title", "format", "why" }] }.`,
 };
 
 const OUTPUT_FORMATS = {
