@@ -69,13 +69,13 @@ export function trimFor(take) {
  * edge is at most 1920 (Reels' 1080×1920). Smaller takes are scaled up to it.
  * Dimensions are even, as H.264 needs.
  */
-export function reelSize(takes) {
+export function reelSize(takes, maxLongEdge = MAX_LONG_EDGE) {
   const aspect = takes[0].width / takes[0].height;
   // Widest frame at this ratio that fits inside each take.
   const widest = Math.max(...takes.map((t) => Math.min(t.width, t.height * aspect)));
   let width = widest;
   let height = widest / aspect;
-  const scale = Math.min(1, MAX_LONG_EDGE / Math.max(width, height));
+  const scale = Math.min(1, maxLongEdge / Math.max(width, height));
   width *= scale;
   height *= scale;
   const even = (n) => Math.max(2, Math.round(n / 2) * 2);
@@ -147,7 +147,7 @@ const assTime = (s) => {
 const assText = (t) => t.replace(/\\/g, '\\\\').replace(/[{}]/g, '').replace(/\n/g, ' ');
 
 /** Subtitle file with the captions (lower middle, above Reels' own UI) and the tag. */
-export function assFile({ width, height, duration, chunks }) {
+export function assFile({ width, height, duration, chunks, tag = true }) {
   const size = Math.round(height * 0.042);
   const tagSize = Math.round(height * 0.022);
   return `[Script Info]
@@ -164,8 +164,7 @@ Style: Tag,${FONT},${tagSize},&H30FFFFFF,&H000000FF,&H60000000,&H00000000,-1,0,0
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-Dialogue: 0,${assTime(0)},${assTime(duration + 1)},Tag,,0,0,0,,Shot with Darpan
-${chunks.map((c) => `Dialogue: 1,${assTime(c.start)},${assTime(c.end)},Caption,,0,0,0,,${assText(c.text)}`).join('\n')}
+${tag ? `Dialogue: 0,${assTime(0)},${assTime(duration + 1)},Tag,,0,0,0,,Shot with Darpan\n` : ''}${chunks.map((c) => `Dialogue: 1,${assTime(c.start)},${assTime(c.end)},Caption,,0,0,0,,${assText(c.text)}`).join('\n')}
 `;
 }
 
@@ -240,7 +239,7 @@ async function buildReel(reel, job) {
     job.stage = 'Getting your takes ready';
     const takes = reel.takes;
     const trims = takes.map(trimFor);
-    const size = reelSize(takes);
+    const size = reelSize(takes, reel.maxLongEdge);
     const total = trims.reduce((n, t) => n + (t.end - t.start), 0);
 
     // Hinglish spellings for every word, from Claude when available.
@@ -262,7 +261,7 @@ async function buildReel(reel, job) {
       job.stage = `Editing shot ${i + 1} of ${takes.length}`;
       const chunks = reel.captions ? captionChunks(take.words ?? [], hinglish[i], trim) : [];
       const assPath = path.join(dir, `piece-${i}.ass`);
-      await fs.promises.writeFile(assPath, assFile({ ...size, duration, chunks }));
+      await fs.promises.writeFile(assPath, assFile({ ...size, duration, chunks, tag: reel.tag !== false }));
       const out = path.join(dir, `piece-${i}.mp4`);
       await encodePiece({
         take,

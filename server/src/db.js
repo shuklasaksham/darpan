@@ -61,6 +61,19 @@ export async function migrate() {
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS has_audio BOOLEAN;
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS file_path TEXT;
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS kept BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS pro_until TIMESTAMPTZ;
+    CREATE TABLE IF NOT EXISTS payments (
+      id BIGSERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      merchant_order_reference TEXT NOT NULL UNIQUE,
+      pine_order_id TEXT,
+      amount_paise INT NOT NULL,
+      status TEXT NOT NULL,
+      pine_status TEXT,
+      raw JSONB,
+      paid_at TIMESTAMPTZ
+    );
     CREATE TABLE IF NOT EXISTS reels (
       id BIGSERIAL PRIMARY KEY,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),

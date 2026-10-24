@@ -17,6 +17,15 @@ services:
         sync: false
       - key: SARVAM_API_KEY
         sync: false
+      - key: PINELABS_CLIENT_ID
+        sync: false
+      - key: PINELABS_CLIENT_SECRET
+        sync: false
+      - key: PINELABS_WEBHOOK_SECRET
+        sync: false
+      # uat for testing, production when live
+      - key: PINELABS_ENV
+        value: uat
       - key: AGENTICORG_API_KEY
         sync: false
       - key: AGENTICORG_DIRECTOR_AGENT_ID

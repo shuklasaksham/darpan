@@ -15,6 +15,7 @@ import { directorConfigured, DirectorError, reviewScript, suggestIdeas } from '.
 import { checkFrame, ClaudeError, claudeConfigured, directorNotes, trendCards, writeScript } from './claude.js';
 import { speak, TtsError, ttsConfigured } from './tts.js';
 import { limits } from './limits.js';
+import { billingRouter, BillingError, planFor, startPaymentSweeper, webhookRouter } from './billing.js';
 
 fs.mkdirSync(config.uploadDir, { recursive: true });
 
@@ -61,6 +62,7 @@ app.use((req, res, next) => {
   }
   next();
 });
+app.use(webhookRouter); // needs the raw body, so before express.json()
 app.use(express.json({ limit: '1mb' }));
 app.use('/api', loadUser);
 
@@ -90,6 +92,7 @@ app.get('/api/health', async (_req, res) => {
 });
 
 app.use('/api/auth', authRouter);
+app.use(billingRouter);
 
 app.post('/api/transcribe', requireUser, limits.transcribe, audioUpload.single('audio'), async (req, res, next) => {
   if (!req.file) return res.status(400).json({ error: 'Send audio in the "audio" field' });
@@ -416,6 +419,11 @@ app.post('/api/reels', requireUser, limits.reels, async (req, res, next) => {
     const byId = new Map(rows.map((t) => [Number(t.id), t]));
     const takes = takeIds.map((id) => byId.get(id));
     if (takes.some((t) => !t)) return res.status(404).json({ error: 'Some takes were not found' });
+    // Free plan: a few reels a month; Pro: unlimited.
+    const plan = await planFor(req.user.id);
+    if (plan.reelsThisMonth >= plan.reelsPerMonth) {
+      return res.status(402).json({ error: `Free includes ${plan.reelsPerMonth} reels a month. Go Pro for unlimited reels.`, upgrade: true });
+    }
     const missing = [];
     for (const t of takes) if (!(await fileExists(t.file_path))) missing.push(Number(t.id));
     // The phone still has these; it re-uploads them and asks again.
@@ -425,7 +433,7 @@ app.post('/api/reels', requireUser, limits.reels, async (req, res, next) => {
       'INSERT INTO reels (user_id, plan_id, take_ids, captions) VALUES ($1, $2, $3, $4) RETURNING *',
       [req.user.id, takes[0].plan_id, takeIds, req.body.captions !== false],
     );
-    enqueueReel({ ...reel, takes });
+    enqueueReel({ ...reel, takes, maxLongEdge: plan.maxLongEdge, tag: plan.tag });
     res.status(202).json({ reelId: reel.id });
   } catch (err) {
     next(err);
@@ -501,7 +509,7 @@ app.use((err, _req, res, _next) => {
     const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
     return res.status(status).json({ error: err.message });
   }
-  if ([DirectorError, TranscribeError, ClaudeError, TtsError].some((type) => err instanceof type)) {
+  if ([DirectorError, TranscribeError, ClaudeError, TtsError, BillingError].some((type) => err instanceof type)) {
     return res.status(err.status).json({ error: err.message });
   }
   console.error(err);
@@ -511,6 +519,7 @@ app.use((err, _req, res, _next) => {
 await migrate();
 if (!directorConfigured) console.warn("AgenticOrg director is not configured: set AGENTICORG_API_KEY and AGENTICORG_DIRECTOR_AGENT_ID");
 sweepOldFiles().catch(() => {});
+startPaymentSweeper();
 setInterval(() => sweepOldFiles().catch(() => {}), 60 * 60 * 1000).unref();
 const server = app.listen(config.port, () => console.log(`Darpan listening on :${config.port}`));
 

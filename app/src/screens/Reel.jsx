@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { getReel, makeReel, reuploadTake } from '../api.js';
+import { goPro } from './Plan.jsx';
 
 /**
  * Once every shot has a kept take: review them, choose captions, make the reel,
@@ -11,6 +12,7 @@ export default function Reel({ shots, kept, onBack, onDone }) {
   const [status, setStatus] = useState({ progress: 0, stage: '' });
   const [error, setError] = useState('');
   const [reelId, setReelId] = useState(null);
+  const [needsPro, setNeedsPro] = useState(false);
   const cancelled = useRef(false);
 
   useEffect(
@@ -44,6 +46,7 @@ export default function Reel({ shots, kept, onBack, onDone }) {
       await poll(created.reelId);
     } catch (err) {
       if (cancelled.current) return;
+      setNeedsPro(err.status === 402);
       setError(err.message);
       setPhase('error');
     }
@@ -117,6 +120,11 @@ export default function Reel({ shots, kept, onBack, onDone }) {
         <div className="making">
           <p className="error">{error}</p>
           <div className="reel-actions">
+            {needsPro && (
+              <button className="primary" onClick={() => goPro(setError)}>
+                Go Pro for unlimited reels
+              </button>
+            )}
             <button className="primary" onClick={start}>
               Try again
             </button>

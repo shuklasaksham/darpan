@@ -623,3 +623,11 @@ button.big { padding: 18px 34px; font-size: 1.1rem; }
 .plan li::before { content: '✓  '; color: var(--marigold); font-weight: 800; }
 .landing-footer { display: flex; justify-content: space-between; color: var(--muted); font-size: 0.9rem; border-top: 1px solid var(--border); padding-top: 16px; }
 .landing-footer a { color: var(--muted); }
+
+/* --- Plan --- */
+.plan-card { padding: 12px 16px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border); }
+.plan-card.pro { background: var(--marigold-soft); border-color: var(--marigold); }
+.plan-card p { margin: 0; }
+.plan-card .row { gap: 10px; }
+.small-button { min-height: 40px; padding: 8px 14px; font-size: 0.9rem; flex: none !important; }
+.good-note { color: var(--good); font-weight: 700; margin-bottom: 6px !important; }

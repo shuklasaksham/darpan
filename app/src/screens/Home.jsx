@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { getIdeas, getTrends, transcribe } from '../api.js';
 import { pickMimeType, stopStream } from '../media.js';
+import { PlanCard } from './Plan.jsx';
 
 export const FORMATS = [
   'Talk to camera',
@@ -63,6 +64,8 @@ export default function Home({ user, health, onShoot, onLogOut }) {
         </div>
         <button className="link" onClick={onLogOut}>Log out</button>
       </header>
+
+      <PlanCard />
 
       <form
         className="card"

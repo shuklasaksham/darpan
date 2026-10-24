@@ -11,6 +11,18 @@ What's needed to put Darpan in real users' hands.
 - Optional: AgenticOrg key and agent ID (idea suggestions).
 - Set spending limits/alerts in each dashboard.
 
+## Payments (Pine Labs)
+
+- In the Pine Labs Online dashboard, Settings → API Keys: set `PINELABS_CLIENT_ID`
+  and `PINELABS_CLIENT_SECRET` in Render; start with `PINELABS_ENV=uat`.
+- Ask Pine Labs support to point webhooks at `https://<your-domain>/api/billing/webhook`
+  and set the webhook secret as `PINELABS_WEBHOOK_SECRET`.
+- Confirm with Pine Labs that amounts are in paise (`PRO_PRICE_PAISE`, default 29900)
+  and which order status means paid (`PINELABS_PAID_STATUSES`, default PROCESSED).
+- Set `PUBLIC_URL` if you use a custom domain (Render's own URL is used otherwise).
+- Switch to `PINELABS_ENV=production` with live keys after a test payment in UAT.
+- Pro is a 30-day pass; auto-renewal needs Pine Labs UPI Autopay (separate work).
+
 ## Render
 
 - Deploy with **New → Blueprint** from this repo (`render.yaml`).

@@ -11,6 +11,17 @@ export const config = {
   sarvamBaseUrl: process.env.SARVAM_BASE_URL || 'https://api.sarvam.ai',
   // A Bulbul v3 voice; see Sarvam's docs for others (shubh, aditya, ritu, neha...).
   sarvamSpeaker: process.env.SARVAM_SPEAKER || 'priya',
+  // Pine Labs Online (Plural) payments for Pro.
+  pinelabsClientId: process.env.PINELABS_CLIENT_ID,
+  pinelabsClientSecret: process.env.PINELABS_CLIENT_SECRET,
+  pinelabsWebhookSecret: process.env.PINELABS_WEBHOOK_SECRET,
+  pinelabsEnv: process.env.PINELABS_ENV || 'uat',
+  pinelabsBaseUrl: process.env.PINELABS_BASE_URL,
+  // Order statuses that mean "paid"; confirm with Pine Labs for your account.
+  pinelabsPaidStatuses: (process.env.PINELABS_PAID_STATUSES || 'PROCESSED').split(',').map((s) => s.trim().toUpperCase()),
+  // Amount in paise (Rs 299 = 29900); confirm the unit with Pine Labs.
+  proPricePaise: Number(process.env.PRO_PRICE_PAISE || 29900),
+  publicUrl: (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, ''),
   agenticorgApiKey: process.env.AGENTICORG_API_KEY,
   agenticorgDirectorAgentId: process.env.AGENTICORG_DIRECTOR_AGENT_ID,
   agenticorgBaseUrl: process.env.AGENTICORG_BASE_URL || 'https://app.agenticorg.ai',
