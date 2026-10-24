@@ -1,5 +1,14 @@
 // Marketing page for visitors who aren't logged in.
-import { LegalFooter } from './Legal.jsx';
+function LegalFooter() {
+  return (
+    <footer className="landing-footer legal-links">
+      <span>© {new Date().getFullYear()} Darpan</span>
+      <span>
+        <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/refunds">Refunds</a> · <a href="/contact">Contact</a>
+      </span>
+    </footer>
+  );
+}
 const FREE = ['3 reels a month', 'Scripts for your niche and trends', 'Live camera coach', "Director's notes on every take", '720p export with the Darpan tag'];
 const PRO = ['Unlimited reels', 'Everything in Free', 'Full HD 1080p export', 'No Darpan tag', 'Priority reel rendering'];
 

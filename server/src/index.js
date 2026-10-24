@@ -551,14 +551,44 @@ function safeJson(text) {
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 
 // Hashed build files never change; everything else is checked on each visit.
+function cacheControl(rel) {
+  if (rel.startsWith('assets/')) return 'public, max-age=31536000, immutable';
+  if (rel.startsWith('mediapipe/') || rel.startsWith('icons/')) return 'public, max-age=604800';
+  return 'no-cache';
+}
+
+// Serve the Brotli/gzip copies made at build time (scripts/precompress.mjs)
+// instead of compressing on every request. Safari and Chrome both accept br.
+const precompressed = new Set();
+(function index(dir) {
+  for (const entry of fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }) : []) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) index(full);
+    else if (full.endsWith('.br') || full.endsWith('.gz')) precompressed.add(full);
+  }
+})(config.staticDir);
+
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  const accept = req.get('accept-encoding') ?? '';
+  const encodings = [/\bbr\b/.test(accept) && ['br', 'br'], /\bgzip\b/.test(accept) && ['gz', 'gzip']].filter(Boolean);
+  if (!encodings.length) return next();
+  const file = path.join(config.staticDir, path.normalize(decodeURIComponent(req.path)));
+  if (!file.startsWith(config.staticDir)) return next();
+  const match = encodings.find(([ext]) => precompressed.has(`${file}.${ext}`));
+  if (!match) return next();
+  const rel = path.relative(config.staticDir, file).replace(/\\/g, '/');
+  res.type(path.extname(file)); // the original type (application/wasm for streaming compile)
+  res.set({ 'Content-Encoding': match[1], Vary: 'Accept-Encoding', 'Cache-Control': cacheControl(rel) });
+  res.sendFile(`${file}.${match[0]}`);
+});
+
 app.use(
   express.static(config.staticDir, {
     index: false,
     setHeaders(res, filePath) {
-      const rel = path.relative(config.staticDir, filePath).replace(/\\/g, '/');
-      if (rel.startsWith('assets/')) res.set('Cache-Control', 'public, max-age=31536000, immutable');
-      else if (rel.startsWith('mediapipe/') || rel.startsWith('icons/')) res.set('Cache-Control', 'public, max-age=604800');
-      else res.set('Cache-Control', 'no-cache');
+      res.set('Cache-Control', cacheControl(path.relative(config.staticDir, filePath).replace(/\\/g, '/')));
+      res.vary('Accept-Encoding');
     },
   }),
 );

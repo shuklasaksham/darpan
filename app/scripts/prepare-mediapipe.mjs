@@ -18,6 +18,8 @@ const MODELS = {
 
 fs.mkdirSync(path.join(outDir, 'wasm'), { recursive: true });
 for (const file of fs.readdirSync(wasmSrc)) {
+  // The ES-module build of the runtime is never loaded (FilesetResolver's default).
+  if (file.includes('_module_')) continue;
   fs.copyFileSync(path.join(wasmSrc, file), path.join(outDir, 'wasm', file));
 }
 

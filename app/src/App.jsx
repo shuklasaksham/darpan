@@ -1,20 +1,36 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { getHealth, getMe, logOut } from './api.js';
 import Auth from './screens/Auth.jsx';
 import Home from './screens/Home.jsx';
-import Camera from './screens/Camera.jsx';
+// Loaded only when needed, so the first screen downloads less.
+const Camera = lazy(() => import('./screens/Camera.jsx'));
 import Script from './screens/Script.jsx';
 import Landing from './screens/Landing.jsx';
-import Admin from './screens/Admin.jsx';
-import Legal, { LEGAL_PATHS } from './screens/Legal.jsx';
+const Admin = lazy(() => import('./screens/Admin.jsx'));
+const Legal = lazy(() => import('./screens/Legal.jsx'));
+const LEGAL_PATHS = ['/terms', '/privacy', '/refunds', '/contact'];
+const loading = <main className="center muted">Loading…</main>;
 import { activePlanId, rememberActive, resumeState } from './screens/Recent.jsx';
 import { getRecent } from './api.js';
 
 const IS_ADMIN = window.location.pathname.startsWith('/admin');
 
 export default function App() {
-  if (LEGAL_PATHS.includes(window.location.pathname)) return <Legal page={window.location.pathname.slice(1)} />;
-  return IS_ADMIN ? <Admin /> : <CreatorApp />;
+  if (LEGAL_PATHS.includes(window.location.pathname)) {
+    return (
+      <Suspense fallback={loading}>
+        <Legal page={window.location.pathname.slice(1)} />
+      </Suspense>
+    );
+  }
+  if (IS_ADMIN) {
+    return (
+      <Suspense fallback={loading}>
+        <Admin />
+      </Suspense>
+    );
+  }
+  return <CreatorApp />;
 }
 
 function CreatorApp() {
@@ -66,7 +82,13 @@ function CreatorApp() {
     setPlanned(null);
     setShoot(null);
   };
-  if (shoot && planned) return <Camera shoot={shoot} planned={planned} initialKept={initialKept} health={health} onClose={close} />;
+  if (shoot && planned) {
+    return (
+      <Suspense fallback={loading}>
+        <Camera shoot={shoot} planned={planned} initialKept={initialKept} health={health} onClose={close} />
+      </Suspense>
+    );
+  }
   if (shoot) return <Script shoot={shoot} health={health} onStart={startCamera} onBack={close} />;
   return <Home user={user} health={health} onShoot={setShoot} onResume={resume} onLogOut={onLogOut} />;
 }

@@ -6,7 +6,8 @@
     "dev": "vite",
     "prebuild": "node scripts/prepare-mediapipe.mjs",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "postbuild": "node scripts/precompress.mjs"
   },
   "type": "module",
   "dependencies": {

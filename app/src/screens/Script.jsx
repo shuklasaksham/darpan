@@ -2,6 +2,16 @@ import { useEffect, useState } from 'react';
 import { reviewPlan, saveScript, writeScript } from '../api.js';
 import { FRAMINGS } from '../camera/framing.js';
 
+// Start downloading and starting the camera's face detection (and the camera
+// screen's code) while the creator reads their script, so the camera opens ready.
+function warmUpCamera() {
+  const idle = window.requestIdleCallback ?? ((fn) => setTimeout(fn, 600)); // Safari has no requestIdleCallback
+  idle(() => {
+    import('./Camera.jsx').catch(() => {});
+    import('../camera/vision.js').then((v) => v.loadFaceDetector()).catch(() => {});
+  });
+}
+
 export function fallbackScript({ idea, format, language }) {
   return {
     title: idea || format || 'Your reel',
@@ -35,6 +45,8 @@ export default function Script({ shoot, health, onStart, onBack }) {
   const [saving, setSaving] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [director, setDirector] = useState(null); // null while reviewing, [] when none
+
+  useEffect(warmUpCamera, []);
 
   useEffect(() => {
     let alive = true;
