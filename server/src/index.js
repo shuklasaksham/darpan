@@ -40,16 +40,17 @@ const CSP = [
   "default-src 'self'",
   // Razorpay Checkout loads its script and opens in an iframe.
   "script-src 'self' 'wasm-unsafe-eval' https://checkout.razorpay.com",
-  "frame-src https://api.razorpay.com https://checkout.razorpay.com",
+  "frame-src https://*.razorpay.com",
   "worker-src 'self' blob:",
-  "connect-src 'self' blob: data: https://api.razorpay.com https://lumberjack.razorpay.com",
-  "img-src 'self' blob: data: https://cdn.razorpay.com",
+  "connect-src 'self' blob: data: https://*.razorpay.com",
+  "img-src 'self' blob: data: https://*.razorpay.com",
   "media-src 'self' blob: data:",
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self'",
   "frame-ancestors 'none'",
   "base-uri 'self'",
-  "form-action 'self'",
+  // Razorpay submits card/netbanking forms from this page into its bank popup.
+  "form-action 'self' https://*.razorpay.com",
 ].join('; ');
 
 app.use((req, res, next) => {
