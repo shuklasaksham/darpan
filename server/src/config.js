@@ -13,9 +13,10 @@ export const config = {
   sarvamSpeaker: process.env.SARVAM_SPEAKER || 'priya',
   adminPassword: process.env.ADMIN_PASSWORD,
   // Razorpay (used for Pro when its keys are set).
-  razorpayKeyId: process.env.RAZORPAY_KEY_ID,
-  razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET,
-  razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
+  // Trimmed: a stray space or newline from copy-paste breaks Razorpay's login.
+  razorpayKeyId: process.env.RAZORPAY_KEY_ID?.trim(),
+  razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET?.trim(),
+  razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET?.trim(),
   razorpayBaseUrl: process.env.RAZORPAY_BASE_URL || 'https://api.razorpay.com',
   // Pine Labs Online (Plural) payments for Pro.
   pinelabsClientId: process.env.PINELABS_CLIENT_ID,
