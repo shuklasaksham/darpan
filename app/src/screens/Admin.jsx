@@ -137,11 +137,6 @@ export default function Admin() {
         rows={data.users.filter((u) => u.is_dev).map(creatorRow)}
       />
       <Table
-        title="Payments"
-        cols={['When', 'Creator', 'Amount', 'Status', 'Pine Labs', 'Reference']}
-        rows={data.payments.map((p) => [when(p.created_at), `@${p.username}`, rupees(p.amount_paise), p.status, p.pine_status ?? '—', p.merchant_order_reference])}
-      />
-      <Table
         title="Reels"
         cols={['When', 'Creator', 'Status', 'Length', 'Size']}
         rows={data.reels.map((r) => [
