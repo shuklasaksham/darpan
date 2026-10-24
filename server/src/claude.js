@@ -40,6 +40,11 @@ async function create(params) {
     } catch (err) {
       lastError = err;
       if (!isRequestProblem(err)) throw err;
+      // An empty credit balance fails every attempt the same way; don't keep trying.
+      if (/credit balance/i.test(err.message)) {
+        console.error('Claude API: the Anthropic account is out of credit (Console → Billing)');
+        throw err;
+      }
       console.error(`Claude attempt ${i + 1} rejected (${err.status}): ${err.message}`);
     }
   }
