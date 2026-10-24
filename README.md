@@ -35,6 +35,34 @@ needs HTTPS outside localhost, so test recording on the deployed site.
 | `UPLOAD_DIR` | Optional; where uploads are written (default: OS temp dir) |
 | `MAX_UPLOAD_MB` | Optional; upload size cap (default 200) |
 
+## Accounts
+
+Sign-up asks for a name (English or Hindi script), gender (woman, man, prefer
+not to say) and a free-text niche. It then suggests usernames built from the
+name; Devanagari names are transliterated the way Indian names are usually
+spelled in English (प्रिया शर्मा → `priya.sharma`, सिंह → `singh`). See
+`server/src/usernames.js`.
+
+Login is username + 4-digit PIN. PINs are hashed with scrypt, and 5 wrong PINs
+lock the account for 15 minutes. Sessions are random tokens in an httpOnly
+cookie, stored hashed in the `sessions` table for 30 days. With only 10,000
+possible PINs, the lockout is the real protection; don't relax it.
+
+Gender and niche are sent to the director so Hindi lines use the right verb
+forms ("main karti hoon" / "main karta hoon") and ideas fit the creator.
+
+## Shooting
+
+The home screen has a text box and a mic. Whatever is in the text box is used
+as the idea, word for word. "Shoot this idea", a format chip or a suggested idea
+opens the in-app camera right away, and the director plans shots while it warms
+up. Takes are recorded with `MediaRecorder` and uploaded to `/api/takes`.
+
+The mic records audio in the browser and sends it to `/api/transcribe`, which
+streams it from disk to Deepgram Nova-3 with `language=multi` and Hindi/English
+hints. Browser speech recognition is deliberately not used because it garbles
+Hinglish. Deepgram may write Hindi words in Devanagari.
+
 ## AI director (AgenticOrg)
 
 The director that plans shoots, recommends shots and reviews takes is an agent
@@ -45,7 +73,8 @@ ID with one of three actions. Each call also sends the expected JSON shape in
 
 | Action | When | Expected output |
 | --- | --- | --- |
-| `plan_shoot` | Creator submits a reel idea | `{ title, hook, shots: [{ title, framing, duration_seconds, say, tips }], caption, hashtags }` |
+| `suggest_ideas` | Home screen loads | `{ ideas: [{ title, format, why }] }` |
+| `plan_shoot` | Camera opens for an idea and/or format | `{ title, hook, shots: [{ title, framing, duration_seconds, say, tips }], caption, hashtags }` |
 | `recommend_shot` | "What should I shoot next?" | `{ shot: {...}, why }` |
 | `review_take` | A take is uploaded for a planned shot | `{ verdict: "keep" | "retake", praise, fixes, next_step }` |
 
@@ -58,7 +87,9 @@ To set it up:
 
 > You are Darpan's AI director for first-time Indian creators shooting vertical
 > reels on a phone. Reply only with JSON in the shape given in
-> `context.output_format`. For `plan_shoot`, turn the idea into a short shot
+> `context.output_format`. Use the creator's gender for Hindi verb forms. For
+> `suggest_ideas`, suggest reel ideas that fit `creator_niche`. For `plan_shoot`,
+> keep the creator's idea exactly as given and turn it (and the `format`, if any) into a short shot
 > list with a strong 1–3 second hook, simple phone-friendly framing, and lines
 > to say in the requested language. For `recommend_shot`, suggest the single
 > best next shot given the plan and shots already done. For `review_take`,

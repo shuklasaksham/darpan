@@ -22,6 +22,7 @@ export class DirectorError extends Error {
 }
 
 const OUTPUT_FORMATS = {
+  suggest_ideas: 'JSON: { ideas: [{ title, format, why }] } with 4-6 ideas',
   plan_shoot:
     'JSON: { title, hook, shots: [{ title, framing, duration_seconds, say, tips: [string] }], caption, hashtags: [string] }',
   recommend_shot:
@@ -56,19 +57,33 @@ async function ask(action, inputs) {
   return { runId: result.run_id, confidence: result.confidence, ...result.output };
 }
 
-export function planShoot({ idea, language, durationSeconds, niche }) {
+// The creator's gender is passed so Hindi lines use the right verb forms
+// ("main karti hoon" / "main karta hoon").
+const creatorInputs = (creator) => ({
+  creator_name: creator.name,
+  creator_niche: creator.niche,
+  creator_gender: creator.gender,
+});
+
+export function suggestIdeas({ creator, language }) {
+  return ask('suggest_ideas', { ...creatorInputs(creator), language: language || 'Hinglish' });
+}
+
+export function planShoot({ creator, idea, format, language, durationSeconds }) {
   return ask('plan_shoot', {
+    ...creatorInputs(creator),
+    // The creator's own words, used exactly as typed or spoken.
     idea,
+    format,
     language: language || 'Hinglish',
     target_duration_seconds: durationSeconds || 30,
-    niche,
   });
 }
 
-export function recommendShot({ plan, shotsDone, situation }) {
-  return ask('recommend_shot', { plan, shots_done: shotsDone, situation });
+export function recommendShot({ creator, plan, shotsDone, situation }) {
+  return ask('recommend_shot', { ...creatorInputs(creator), plan, shots_done: shotsDone, situation });
 }
 
-export function reviewTake({ shot, take }) {
-  return ask('review_take', { shot, take });
+export function reviewTake({ creator, shot, take }) {
+  return ask('review_take', { ...creatorInputs(creator), shot, take });
 }

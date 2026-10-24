@@ -14,6 +14,23 @@ export async function migrate() {
     return;
   }
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id BIGSERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      username TEXT NOT NULL UNIQUE CHECK (username = lower(username)),
+      name TEXT NOT NULL,
+      gender TEXT NOT NULL CHECK (gender IN ('woman', 'man', 'prefer_not_to_say')),
+      niche TEXT NOT NULL,
+      pin_hash TEXT NOT NULL,
+      failed_pins INT NOT NULL DEFAULT 0,
+      locked_until TIMESTAMPTZ
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      expires_at TIMESTAMPTZ NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS takes (
       id BIGSERIAL PRIMARY KEY,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -33,5 +50,8 @@ export async function migrate() {
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS plan_id BIGINT REFERENCES shoot_plans(id);
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS shot_index INT;
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS review JSONB;
+    ALTER TABLE takes ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id) ON DELETE CASCADE;
+    ALTER TABLE shoot_plans ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id) ON DELETE CASCADE;
+    DELETE FROM sessions WHERE expires_at < now();
   `);
 }

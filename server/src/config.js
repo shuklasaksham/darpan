@@ -6,6 +6,7 @@ export const config = {
   databaseUrl: process.env.DATABASE_URL,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY,
   deepgramApiKey: process.env.DEEPGRAM_API_KEY,
+  deepgramBaseUrl: process.env.DEEPGRAM_BASE_URL || 'https://api.deepgram.com',
   sarvamApiKey: process.env.SARVAM_API_KEY,
   agenticorgApiKey: process.env.AGENTICORG_API_KEY,
   agenticorgDirectorAgentId: process.env.AGENTICORG_DIRECTOR_AGENT_ID,
