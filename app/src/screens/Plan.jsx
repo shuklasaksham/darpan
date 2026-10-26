@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
 import { getBilling, startCheckout, verifyRazorpay } from '../api.js';
+import { Wordmark } from '../ui/Brand.jsx';
+import Glyph from '../ui/Glyph.jsx';
+import { Poster, resetDate, shortDate } from '../ui/parts.jsx';
 
 function loadRazorpay() {
   if (window.Razorpay) return Promise.resolve();
@@ -13,8 +16,8 @@ function loadRazorpay() {
 }
 
 /**
- * Starts paying for Pro: Razorpay's checkout popup, or a redirect to Pine Labs'
- * hosted checkout, depending on which the server is set up with.
+ * Starts paying for Pro: Razorpay's checkout popup, the Razorpay Payment Page,
+ * or a redirect to Pine Labs' hosted checkout, depending on how the server is set up.
  */
 export async function goPro(setError) {
   try {
@@ -38,7 +41,7 @@ export async function goPro(setError) {
         description: 'Darpan Pro, 30 days',
         image: `${window.location.origin}/icons/icon-192.png`,
         prefill: { name: order.name },
-        theme: { color: '#f5a21b' },
+        theme: { color: '#f0a23b' },
         handler: async (response) => {
           try {
             const { status } = await verifyRazorpay(response);
@@ -58,95 +61,101 @@ export async function goPro(setError) {
   }
 }
 
-/** Plan status on the home screen: reels left on Free, or Pro's renewal date. */
-export function PlanCard() {
+export function useBilling() {
   const [billing, setBilling] = useState(null);
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [upgradeOpen, setUpgradeOpen] = useState(false);
-  const [notice] = useState(() => new URLSearchParams(window.location.search).get('billing'));
-
+  const reload = () => getBilling().then(setBilling).catch(() => {});
   useEffect(() => {
-    getBilling().then(setBilling).catch(() => {});
-    // Drop ?billing=... from the address bar once read.
-    if (notice) window.history.replaceState(null, '', '/');
-  }, [notice]);
-
-  if (!billing) return null;
-  const left = billing.reelsPerMonth == null ? null : Math.max(0, billing.reelsPerMonth - billing.reelsThisMonth);
-
-  return (
-    <section className={`plan-card ${billing.plan}`}>
-      {notice === 'success' && <p className="good-note">Payment received. Welcome to Pro!</p>}
-      {notice === 'pending' && <p className="muted">We're confirming your payment. Pro switches on in a few minutes.</p>}
-      {notice === 'failed' && <p className="error">The payment didn't go through. You haven't been charged.</p>}
-      {billing.plan === 'pro' ? (
-        <p>
-          <span className="tag">PRO</span> Unlimited reels until{' '}
-          {new Date(billing.proUntil).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
-        </p>
-      ) : (
-        <div className="row between">
-          <p>
-            <strong>Free</strong> · {left} of {billing.reelsPerMonth} reels left this month
-          </p>
-          <button className="primary small-button" onClick={() => setUpgradeOpen(true)}>
-            Upgrade
-          </button>
-        </div>
-      )}
-      {error && <p className="error">{error}</p>}
-      {upgradeOpen && (
-        <UpgradeSheet
-          billing={billing}
-          busy={busy}
-          error={error}
-          onPay={() => {
-            setBusy(true);
-            setError('');
-            goPro(setError).finally(() => setBusy(false));
-          }}
-          onClose={() => setUpgradeOpen(false)}
-        />
-      )}
-    </section>
-  );
+    reload();
+  }, []);
+  return [billing, reload];
 }
 
-const PRO_PERKS = ['Unlimited reels every month', 'Full HD 1080p export', 'No "Shot with Darpan" tag', 'Priority reel rendering'];
+/**
+ * Pro, sold on what the creator gets: their own frame as Free (720p, tagged)
+ * next to Pro (1080p, clean), then the price.
+ */
+export function Paywall({ billing, reason = 'upgrade', posterSrc = null, onClose }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const until = new Date(Date.now() + 30 * 864e5);
+  const price = billing?.priceRupees ?? 299;
+  const limit = reason === 'limit';
 
-function UpgradeSheet({ billing, busy, error, onPay, onClose }) {
   return (
-    <div className="upgrade-backdrop" role="dialog" aria-modal="true" aria-label="Upgrade to Pro" onClick={onClose}>
-      <div className="upgrade-sheet" onClick={(e) => e.stopPropagation()}>
-        <span className="tag">PRO</span>
-        <h2>
-          ₹{billing.priceRupees}
-          <small> for 30 days</small>
-        </h2>
-        <ul>
-          {PRO_PERKS.map((p) => (
-            <li key={p}>{p}</li>
-          ))}
-        </ul>
-        {billing.provider === 'razorpay_page' && <PagePaymentSteps username={billing.username} />}
-        {billing.paymentsEnabled ? (
-          <button className="primary" disabled={busy} onClick={onPay}>
-            {busy ? 'Opening payment…' : billing.provider === 'razorpay_page' ? `Pay ₹${billing.priceRupees} on Razorpay` : `Pay ₹${billing.priceRupees}`}
+    <div className="paywall studio" role="dialog" aria-modal="true" aria-label="Darpan Pro">
+      <div className="screen" style={{ gap: 'var(--space-5)' }}>
+        <header className="topbar">
+          <button className="icon-btn" onClick={onClose} aria-label="Close">
+            <Glyph name="x" />
           </button>
-        ) : (
-          <button className="primary" disabled>
+        </header>
+        <div className="compare">
+          <figure className="free">
+            <Poster src={posterSrc}>
+              <span className="tagmark">
+                Shot with <Wordmark className="inline-mark" />
+              </span>
+            </Poster>
+            <figcaption>Free · 720p</figcaption>
+          </figure>
+          <figure className="pro">
+            <Poster src={posterSrc} />
+            <figcaption>Pro · 1080p</figcaption>
+          </figure>
+        </div>
+        <div className="stack">
+          <h1>{limit ? `Your ${billing?.reelsPerMonth ?? 3} free reels are used up` : 'Make every reel look pro'}</h1>
+          <p className="muted" style={{ fontSize: 17 }}>
+            {limit ? 'Go Pro to make this reel now, and every reel after it for 30 days.' : 'Unlimited reels in full HD for 30 days, without our tag.'}
+          </p>
+        </div>
+        <ul className="checks">
+          <li>
+            <Glyph name="check" size={20} /> Unlimited reels until {shortDate(until)}
+          </li>
+          <li>
+            <Glyph name="check" size={20} /> Full 1080p, no “Shot with Darpan” tag
+          </li>
+          <li>
+            <Glyph name="check" size={20} /> Same scripts, live coaching and notes
+          </li>
+        </ul>
+        <p className="row" style={{ alignItems: 'baseline' }}>
+          <span className="price-big">₹{price}</span>
+          <span className="muted small">once · about ₹{Math.round(price / 30)} a day</span>
+        </p>
+        {billing?.provider === 'razorpay_page' && <PagePaymentSteps username={billing.username} />}
+        {billing?.paymentsEnabled === false ? (
+          <button className="brand block" disabled>
             Pro is coming soon
           </button>
+        ) : (
+          <button
+            className="brand block"
+            disabled={busy || !billing}
+            onClick={() => {
+              setBusy(true);
+              setError('');
+              goPro(setError).finally(() => setBusy(false));
+            }}
+          >
+            {busy ? 'Opening payment…' : `Pay ₹${price} with UPI or card`}
+          </button>
         )}
-        <p className="muted small">Secure payment by {billing.provider === 'pinelabs' ? 'Pine Labs' : 'Razorpay'}: UPI, cards and netbanking. No auto-renewal.</p>
         {error && <p className="error">{error}</p>}
-        {billing.provider === 'razorpay_page' && (
-          <button onClick={() => window.location.reload()}>I've paid, check now</button>
+        <p className="tiny muted center-text">Razorpay secure · No auto-renew · Refund in 48 h if unused</p>
+        {billing?.provider === 'razorpay_page' && (
+          <button onClick={() => window.location.assign('/?billing=pending')}>I’ve paid, check now</button>
         )}
-        <button className="link" onClick={onClose}>
-          Not now
-        </button>
+        {limit ? (
+          <button className="link strong" onClick={onClose}>
+            Wait for {billing?.reelsPerMonth ?? 3} free reels on {resetDate({ day: 'numeric', month: 'short' })}
+          </button>
+        ) : (
+          <button className="link" onClick={onClose}>
+            Not now
+          </button>
+        )}
       </div>
     </div>
   );
@@ -156,19 +165,103 @@ function UpgradeSheet({ billing, busy, error, onPay, onClose }) {
 function PagePaymentSteps({ username }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div className="page-steps">
-      <p>
-        On the payment page, enter your Darpan username in the <strong>Darpan username</strong> box:
-      </p>
+    <div className="notice" style={{ flexDirection: 'column' }}>
+      <span>
+        On the payment page, type your username in the <strong>Darpan username</strong> box:
+      </span>
       <button
-        className="username-copy"
+        className="block"
         onClick={() => {
           navigator.clipboard?.writeText(username).then(() => setCopied(true)).catch(() => {});
         }}
       >
-        {username} <span>{copied ? 'Copied' : 'Copy'}</span>
+        {username} · {copied ? 'Copied' : 'Copy'}
       </button>
-      <p className="muted small">Pro switches on within a minute of paying.</p>
     </div>
+  );
+}
+
+/** After paying: confirming, failed, or Pro is on. */
+export function BillingNotice({ status, onDone }) {
+  const [billing, reload] = useBilling();
+  const [checking, setChecking] = useState(false);
+  const isPro = billing?.plan === 'pro';
+  const [error, setError] = useState('');
+
+  // A pending payment usually settles within a minute; keep checking quietly.
+  useEffect(() => {
+    if (status !== 'pending' || isPro) return;
+    const id = setInterval(reload, 5000);
+    return () => clearInterval(id);
+  }, [status, isPro]);
+
+  if (isPro || status === 'success') {
+    return (
+      <main className="screen with-bar">
+        <div className="big-state">
+          <span className="tag" style={{ alignSelf: 'flex-start' }}>
+            <Glyph name="pro" size={14} /> Pro
+          </span>
+          <h1 className="display" style={{ fontSize: 56 }}>You’re on Pro</h1>
+          <p className="muted" style={{ fontSize: 18 }}>
+            Unlimited reels in 1080p with no tag{billing?.proUntil ? `, until ${shortDate(billing.proUntil)}` : ''}. It doesn’t renew by itself.
+          </p>
+        </div>
+        <div className="action-bar">
+          <button className="primary" onClick={onDone}>
+            Make my reel now
+          </button>
+        </div>
+      </main>
+    );
+  }
+
+  if (status === 'failed') {
+    return (
+      <main className="screen with-bar">
+        <div className="big-state">
+          <h1>Payment didn’t go through</h1>
+          <p className="muted" style={{ fontSize: 18 }}>
+            No money was taken. If your bank shows a charge, it’s reversed automatically within 5–7 working days.
+          </p>
+          <a className="small" href="/contact">Contact support</a>
+          {error && <p className="error">{error}</p>}
+        </div>
+        <div className="action-bar">
+          <button className="secondary" onClick={onDone}>
+            Not now
+          </button>
+          <button className="primary" onClick={() => goPro(setError)}>
+            Try again
+          </button>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="screen with-bar">
+      <div className="big-state">
+        <div className="loader" />
+        <h1>Confirming your payment</h1>
+        <p className="muted" style={{ fontSize: 18 }}>Paid by UPI? Approve the request in your UPI app. This usually takes under a minute.</p>
+        <p className="small muted">Taking longer than 2 minutes? We keep checking with Razorpay, and Pro switches on by itself once it clears.</p>
+      </div>
+      <div className="action-bar">
+        <button className="secondary" onClick={onDone}>
+          Later
+        </button>
+        <button
+          className="primary"
+          disabled={checking}
+          onClick={() => {
+            setChecking(true);
+            reload().finally(() => setChecking(false));
+          }}
+        >
+          {checking ? 'Checking…' : 'Check again'}
+        </button>
+      </div>
+    </main>
   );
 }

@@ -1,3 +1,6 @@
+import { Wordmark } from '../ui/Brand.jsx';
+import { LegalFooter } from './Landing.jsx';
+
 // Terms, privacy, refunds and contact: required by Razorpay's website review.
 // Business details are in one place; phone and address show once filled in.
 const BUSINESS = {
@@ -61,9 +64,8 @@ export default function Legal({ page }) {
   return (
     <div className="landing legal">
       <nav className="landing-nav">
-        <a href="/" className="brand">
-          <img src="/logo.svg" alt="" width="22" height="33" />
-          <span>Darpan</span>
+        <a href="/" aria-label="Darpan home">
+          <Wordmark />
         </a>
       </nav>
       <article>
@@ -78,16 +80,5 @@ export default function Legal({ page }) {
       </article>
       <LegalFooter />
     </div>
-  );
-}
-
-export function LegalFooter() {
-  return (
-    <footer className="landing-footer legal-links">
-      <span>© {new Date().getFullYear()} Darpan</span>
-      <span>
-        <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/refunds">Refunds</a> · <a href="/contact">Contact</a>
-      </span>
-    </footer>
   );
 }

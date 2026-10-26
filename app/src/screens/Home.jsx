@@ -1,23 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { getTrends, transcribe } from '../api.js';
+import { getTrends, posterUrl, transcribe } from '../api.js';
 import { pickMimeType, stopStream } from '../media.js';
-import { PlanCard } from './Plan.jsx';
-import { RecentShoots } from './Recent.jsx';
+import { resumeState, shootProgress } from './Recent.jsx';
+import { Wordmark } from '../ui/Brand.jsx';
+import Glyph from '../ui/Glyph.jsx';
+import { Poster } from '../ui/parts.jsx';
 
-export const FORMATS = [
-  'Talk to camera',
-  'Top 3 list',
-  'Day in my life',
-  'Quick how-to',
-  'Before → after',
-  'POV skit',
-  'Honest review',
-  'Storytime',
-];
-const LANGUAGES = ['Hinglish', 'Hindi', 'English'];
+export const LANGUAGES = ['Hinglish', 'Hindi', 'English'];
 const MAX_VOICE_SECONDS = 60;
+const CARD_GLYPHS = ['reel', 'idea', 'shoot', 'light', 'frame'];
 
-function savedLanguage() {
+export function savedLanguage() {
   try {
     return localStorage.getItem('darpan.language') || 'Hinglish';
   } catch {
@@ -25,19 +18,29 @@ function savedLanguage() {
   }
 }
 
-export default function Home({ user, health, onShoot, onResume, onLogOut }) {
+export function saveLanguage(language) {
+  try {
+    localStorage.setItem('darpan.language', language);
+  } catch {}
+}
+
+/** "Food: budget street food in Indore" -> "food" */
+export const nicheWord = (niche = '') => niche.split(':')[0].trim().toLowerCase() || 'your niche';
+
+export default function Home({ user, health, shoots, onShoot, onResume, onAccount }) {
   const [idea, setIdea] = useState('');
   const [language, setLanguage] = useState(savedLanguage);
   const [cards, setCards] = useState(null); // null while loading
+  const [listening, setListening] = useState(false);
   const firstName = user.name.split(/\s+/)[0];
-  // Trend cards come from Claude.
   const trendsOn = Boolean(health?.scripts);
+  const firstTime = shoots !== null && shoots.length === 0;
+  const unfinished = (shoots ?? []).find((s) => {
+    const p = shootProgress(s);
+    return p.kept > 0 && s.reel?.status !== 'done' && Date.now() - new Date(s.createdAt) < 24 * 3600e3;
+  });
 
-  useEffect(() => {
-    try {
-      localStorage.setItem('darpan.language', language);
-    } catch {}
-  }, [language]);
+  useEffect(() => saveLanguage(language), [language]);
 
   useEffect(() => {
     if (!trendsOn) return;
@@ -51,101 +54,121 @@ export default function Home({ user, health, onShoot, onResume, onLogOut }) {
     };
   }, [trendsOn, language]);
 
-  // Whatever is in the box is the idea, word for word.
   const typedIdea = idea.trim();
+  const submit = (e) => {
+    e.preventDefault();
+    if (typedIdea) onShoot({ idea: typedIdea, format: null, language });
+  };
 
   return (
-    <main>
-      <header className="top">
-        <div>
-          <h2>Namaste, {firstName}</h2>
-          <p className="muted">@{user.username}</p>
-        </div>
-        <button className="link" onClick={onLogOut}>Log out</button>
+    <main className="screen with-tabs">
+      <header className="home-top">
+        <Wordmark />
+        <button className="avatar" onClick={onAccount} aria-label="Your account">
+          {firstName[0]?.toUpperCase()}
+        </button>
       </header>
 
-      <PlanCard />
+      {unfinished && <ContinueCard shoot={unfinished} onResume={onResume} />}
 
-      <form
-        className="card"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (typedIdea) onShoot({ idea: typedIdea, format: null, language });
-        }}
-      >
-        <label htmlFor="idea">What's your reel idea?</label>
-        <div className="idea-box">
+      <h1 style={{ fontSize: 34 }}>{firstTime ? `Let’s make your first reel, ${firstName}` : `What’s the reel today, ${firstName}?`}</h1>
+
+      <form className="stack" onSubmit={submit}>
+        <div className={`idea-box ${listening ? 'listening' : ''}`}>
           <textarea
-            id="idea"
             value={idea}
             onChange={(e) => setIdea(e.target.value)}
-            placeholder="Type it, or tap the mic and say it"
+            placeholder={listening ? 'Listening… bolte rahiye' : 'Type your idea, or tap the mic and say it'}
             maxLength={1000}
             rows={3}
+            aria-label="Your reel idea"
           />
-          {health?.voice && (
-            <MicButton
-              language={language}
-              onTranscript={(text) => setIdea((current) => (current.trim() ? `${current.trim()} ${text}` : text))}
-            />
-          )}
+          <div className="row">
+            <select value={language} onChange={(e) => setLanguage(e.target.value)} aria-label="Script language">
+              {LANGUAGES.map((l) => (
+                <option key={l}>{l}</option>
+              ))}
+            </select>
+            {health?.voice && (
+              <MicButton
+                language={language}
+                onListening={setListening}
+                onTranscript={(text) => setIdea((current) => (current.trim() ? `${current.trim()} ${text}` : text))}
+              />
+            )}
+          </div>
         </div>
-        <div className="row between">
-          <select value={language} onChange={(e) => setLanguage(e.target.value)} aria-label="Language">
-            {LANGUAGES.map((l) => <option key={l}>{l}</option>)}
-          </select>
-          <button className="primary" disabled={!typedIdea}>Shoot this idea</button>
-        </div>
+        <button className="primary block" disabled={!typedIdea || listening}>
+          {listening ? 'Listening…' : 'Write my script'} {!listening && <Glyph name="next" size={20} />}
+        </button>
       </form>
+
+      {firstTime && (
+        <section className="first-reel">
+          <div className="row between">
+            <h3>Your first reel in 3 steps</h3>
+            <span className="small muted">0 of 3</span>
+          </div>
+          <ol className="steps">
+            <li className="now">Say your idea, in any language</li>
+            <li>Shoot 1–3 short shots with your coach</li>
+            <li>Save it and post</li>
+          </ol>
+        </section>
+      )}
 
       {trendsOn && (cards === null || cards.length > 0) && (
         <section className="stack">
-          <div className="section-title">
-            <h3>Trending in your niche</h3>
-            <span className="muted">Tap to shoot</span>
+          <div className="section-head">
+            <h2>Trending in {nicheWord(user.niche)}</h2>
           </div>
-          <div className="trend-cards">
+          <div className="rail" role="list">
             {cards === null
-              ? [0, 1, 2].map((i) => <div key={i} className="trend-skeleton" aria-hidden="true" />)
+              ? [0, 1, 2].map((i) => <div key={i} className="trend-card skeleton" aria-hidden="true" />)
               : cards.map((card, i) => (
                   <button
                     key={i}
+                    role="listitem"
                     className="trend-card"
                     onClick={() => onShoot({ idea: card.title, format: card.format ?? null, language })}
                   >
-                    <strong>{card.title}</strong>
-                    {card.why && <p>{card.why}</p>}
-                    {card.format && <span className="format">{card.format}</span>}
+                    <Glyph name={CARD_GLYPHS[i % CARD_GLYPHS.length]} className="bg" />
+                    {card.format ? <span className="tag ink">{card.format}</span> : <span />}
+                    <span>
+                      <strong>{card.title}</strong>
+                      {card.why && <small>{card.why}</small>}
+                    </span>
                   </button>
                 ))}
           </div>
         </section>
       )}
-
-      <RecentShoots onResume={onResume} />
-
-      <section className="stack">
-        <h3>{typedIdea ? 'Shoot it as…' : 'Or pick a format'}</h3>
-        <div className="chips">
-          {FORMATS.map((format) => (
-            <button
-              key={format}
-              className="chip"
-              onClick={() => onShoot({ idea: typedIdea || null, format, language })}
-            >
-              {format}
-            </button>
-          ))}
-        </div>
-      </section>
-
     </main>
   );
 }
 
-function MicButton({ language, onTranscript }) {
+function ContinueCard({ shoot, onResume }) {
+  const p = shootProgress(shoot);
+  const next = shoot.script?.shots?.[p.nextIndex]?.title;
+  return (
+    <button className="continue-card" onClick={() => onResume(resumeState(shoot))}>
+      <Poster className="poster" src={p.posterTakeId ? posterUrl(p.posterTakeId) : null} />
+      <span className="grow">
+        <span className="eyebrow">Continue your shoot</span>
+        <strong>{shoot.script?.title || shoot.brief?.idea || 'Your reel'}</strong>
+        <span className="small muted">
+          {p.ready ? 'All shots kept · next: make your reel' : `${p.kept} of ${p.total} shots kept${next ? ` · next: ${next}` : ''}`}
+        </span>
+      </span>
+      <span className="go">Go</span>
+    </button>
+  );
+}
+
+function MicButton({ language, onTranscript, onListening }) {
   const [state, setState] = useState('idle'); // idle | recording | sending
   const [error, setError] = useState('');
+  const [blocked, setBlocked] = useState(false);
   const recorderRef = useRef(null);
   const timerRef = useRef(null);
   const unmountedRef = useRef(false);
@@ -157,6 +180,7 @@ function MicButton({ language, onTranscript }) {
     },
     [],
   );
+  useEffect(() => onListening(state === 'recording'), [state]);
 
   function stopRecording() {
     clearTimeout(timerRef.current);
@@ -169,7 +193,7 @@ function MicButton({ language, onTranscript }) {
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
-      setError('Allow microphone access to speak your idea.');
+      setBlocked(true);
       return;
     }
     const mimeType = pickMimeType(['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg;codecs=opus']);
@@ -198,32 +222,50 @@ function MicButton({ language, onTranscript }) {
     timerRef.current = setTimeout(stopRecording, MAX_VOICE_SECONDS * 1000);
   }
 
-  const labels = { idle: 'Speak your idea', recording: 'Stop recording', sending: 'Transcribing' };
+  const labels = { idle: 'Speak your idea', recording: 'Stop and use what I said', sending: 'Transcribing' };
   return (
     <>
+      {error && <span className="small field-state bad grow">{error}</span>}
       <button
         type="button"
-        className={`mic ${state}`}
+        className={`mic-btn ${state === 'recording' ? 'on' : ''}`}
         onClick={state === 'recording' ? stopRecording : start}
         disabled={state === 'sending'}
         aria-label={labels[state]}
         title={labels[state]}
       >
-        {state === 'sending' ? '…' : <MicIcon />}
+        {state === 'sending' ? <span className="loader" style={{ width: 20, height: 20, borderWidth: 2 }} /> : state === 'recording' ? <Glyph name="check" /> : <Glyph name="voice" />}
       </button>
-      {state === 'recording' && <p className="listening">Listening… tap to stop</p>}
-      {error && <p className="error">{error}</p>}
+      {blocked && <MicBlocked onRetry={() => { setBlocked(false); start(); }} onClose={() => setBlocked(false)} />}
     </>
   );
 }
 
-function MicIcon() {
+function MicBlocked({ onRetry, onClose }) {
+  const iPhone = /iPhone|iPad|iPod/.test(navigator.userAgent);
   return (
-    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"
-      />
-    </svg>
+    <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label="Allow the microphone" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+        <h2>Allow the microphone</h2>
+        <p className="muted">Darpan needs your mic to hear your idea. Nothing is saved until you shoot.</p>
+        <ol className="steps">
+          {iPhone ? (
+            <>
+              <li>Tap aA in the address bar</li>
+              <li>Open Website Settings, then Microphone</li>
+              <li>Choose Allow, then come back here</li>
+            </>
+          ) : (
+            <>
+              <li>Tap the lock at the left of the address bar</li>
+              <li>Open Permissions, then Microphone</li>
+              <li>Choose Allow, then come back here</li>
+            </>
+          )}
+        </ol>
+        <button className="primary block" onClick={onRetry}>Try the mic again</button>
+        <button className="link" onClick={onClose}>Type my idea instead</button>
+      </div>
+    </div>
   );
 }

@@ -153,7 +153,29 @@ export function analyzeTake({ words, duration, loudness = [], gaze = [], planned
   score = Math.max(0, Math.min(100, Math.round(score)));
 
   const ranked = Object.keys(issues).sort((a, b) => weight(b, issues) - weight(a, issues));
+  f.breakdown = breakdown(issues, f);
   return { features: f, issues, ranked, score };
+}
+
+/**
+ * The score split three ways, each out of 10: the hook (the first seconds),
+ * the voice, and eye contact (null when it couldn't be measured, e.g. the back camera).
+ */
+export function breakdown(issues, f) {
+  const clamp = (n) => Math.max(0, Math.min(10, Math.round(n)));
+  if (issues.no_speech) return { hook: 0, voice: 0, eye: f.screenFraction == null ? null : clamp(10 * (1 - f.screenFraction)) };
+  let hook = 10;
+  if (issues.slow_start) hook -= Math.min(5, 1.5 + (issues.slow_start.firstWordAt - SLOW_START_S) * 1.5);
+  if (issues.greeting_opener) hook -= 3;
+  let voice = 10;
+  if (issues.flat_voice) voice -= 3;
+  if (issues.trailing_off) voice -= 2.5;
+  if (issues.fillers) voice -= Math.min(3, issues.fillers.count * 0.8);
+  if (issues.cut_off_ending) voice -= 1.5;
+  if (issues.over_length) voice -= 1;
+  // Eye contact: full marks up to 10% of the take looking down at the screen.
+  const eye = f.screenFraction == null ? null : clamp(10 * (1 - Math.max(0, f.screenFraction - 0.1) / 0.9));
+  return { hook: clamp(hook), voice: clamp(voice), eye };
 }
 
 const weight = (id, issues) => (id === 'fillers' ? Math.min(15, 4 * issues.fillers.count) : PENALTY[id]);

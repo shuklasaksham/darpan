@@ -109,7 +109,7 @@ export function FrameGuide({ framing, aspect, matched }) {
   const x = cx - side / 2;
   const y = cy - side / 2;
   const c = side * 0.22; // bracket length
-  const color = matched ? '#5fd08f' : '#ffffff';
+  const color = matched ? '#f0a23b' : '#ffffff'; // marigold once the face sits right
   const corners = [
     `M${x},${y + c} V${y} H${x + c}`,
     `M${x + side - c},${y} H${x + side} V${y + c}`,

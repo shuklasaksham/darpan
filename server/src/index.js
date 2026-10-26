@@ -6,9 +6,9 @@ import compression from 'compression';
 import multer from 'multer';
 import { config } from './config.js';
 import { pool, migrate } from './db.js';
-import { extractAudio, probe, ffmpegAvailable } from './ffmpeg.js';
-import { analyzeTake, ruleNotes } from './analyze.js';
-import { enqueueReel, jobStatus, sweepOldFiles, takesDir } from './reels.js';
+import { extractAudio, extractPoster, extractStrip, probe, ffmpegAvailable } from './ffmpeg.js';
+import { analyzeTake, findFillers, ruleNotes } from './analyze.js';
+import { enqueueReel, jobStatus, sweepOldFiles, takesDir, toHinglish, trimFor } from './reels.js';
 import { authRouter, loadUser, requireUser } from './auth.js';
 import { transcribeFile, transcribeWithWords, TranscribeError } from './transcribe.js';
 import { checkFrame, ClaudeError, claudeConfigured, directorNotes, trendCards, writeScript } from './claude.js';
@@ -167,7 +167,7 @@ app.get('/api/recent', requireUser, async (req, res, next) => {
          coalesce((SELECT json_agg(json_build_object('id', t.id, 'shotIndex', t.shot_index, 'score', t.score,
                                                      'available', t.file_path IS NOT NULL) ORDER BY t.shot_index)
                    FROM takes t WHERE t.plan_id = p.id AND t.kept), '[]') AS kept,
-         (SELECT json_build_object('id', r.id, 'status', r.status) FROM reels r
+         (SELECT json_build_object('id', r.id, 'status', r.status, 'durationSeconds', r.duration_seconds) FROM reels r
            WHERE r.plan_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS reel
        FROM shoot_plans p WHERE p.user_id = $1 ORDER BY p.created_at DESC LIMIT 12`,
       [req.user.id],
@@ -360,8 +360,22 @@ app.post('/api/takes', requireUser, limits.takes, videoUpload.single('video'), a
       await pool.query('UPDATE takes SET file_path = $2 WHERE id = $1', [id, filePath]);
       stored = true;
     }
+    // Which take of this shot this is, and the best score so far ("Best of 3 takes").
+    let takeNumber = 1;
+    let bestScore = director.score;
+    if (pool && id && planId && shotIndex !== null) {
+      const { rows: [n] } = await pool.query(
+        'SELECT count(*)::int AS n, max(score)::int AS best FROM takes WHERE user_id = $1 AND plan_id = $2 AND shot_index = $3',
+        [req.user.id, planId, shotIndex],
+      );
+      takeNumber = n.n;
+      bestScore = n.best ?? director.score;
+    }
     res.json({
       id,
+      takeNumber,
+      bestScore,
+      breakdown: analysis.features.breakdown,
       durationSeconds: meta.durationSeconds,
       width: meta.width,
       height: meta.height,
@@ -388,32 +402,118 @@ async function ownTake(id, userId) {
 
 const fileExists = (p) => (p ? fs.promises.access(p).then(() => true, () => false) : Promise.resolve(false));
 
-// "Keep" a take: it becomes the shot's take for the reel, and the shot's other
-// takes' files are deleted.
+// "Keep" a take: it becomes the shot's take for the reel. The shot's other
+// takes stay on disk (until the daily sweep) so the creator can switch back.
 app.post('/api/takes/:id/keep', requireUser, async (req, res, next) => {
   try {
     const take = await ownTake(req.params.id, req.user.id);
     if (!take) return res.status(404).json({ error: 'Take not found' });
-    const { rows: others } = await pool.query(
-      `WITH others AS (
-         SELECT id, file_path FROM takes
-         WHERE user_id = $1 AND plan_id IS NOT DISTINCT FROM $2 AND shot_index IS NOT DISTINCT FROM $3 AND id <> $4
-         FOR UPDATE
-       )
-       UPDATE takes SET kept = false, file_path = NULL
-       FROM others WHERE takes.id = others.id
-       RETURNING others.file_path AS old_path`,
+    await pool.query(
+      `UPDATE takes SET kept = (id = $4)
+       WHERE user_id = $1 AND plan_id IS NOT DISTINCT FROM $2 AND shot_index IS NOT DISTINCT FROM $3`,
       [req.user.id, take.plan_id, take.shot_index, take.id],
     );
-    await pool.query('UPDATE takes SET kept = true WHERE id = $1', [take.id]);
-    await Promise.all(others.filter((o) => o.old_path).map((o) => fs.promises.rm(o.old_path, { force: true })));
     res.json({ ok: true });
   } catch (err) {
     next(err);
   }
 });
 
-// Re-upload a kept take whose file is gone (Render's disk is wiped on restart).
+// Every take of a shoot, for the reel editor: pick another take, trim it, fix its captions.
+app.get('/api/plans/:id/takes', requireUser, async (req, res, next) => {
+  if (!pool) return res.json({ takes: [] });
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM takes WHERE user_id = $1 AND plan_id = $2 AND shot_index IS NOT NULL ORDER BY shot_index, created_at',
+      [req.user.id, req.params.id],
+    );
+    const numbers = new Map();
+    const takes = [];
+    for (const t of rows) {
+      const n = (numbers.get(t.shot_index) ?? 0) + 1;
+      numbers.set(t.shot_index, n);
+      takes.push({ ...editableTake(t), takeNumber: n, available: await fileExists(t.file_path) });
+    }
+    res.json({ takes });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** What the reel editor needs to know about a take. */
+function editableTake(t) {
+  const words = t.words ?? [];
+  const fillers = new Set(findFillers(words).flatMap((f) => f.indices));
+  const trim = trimFor(t);
+  return {
+    id: Number(t.id),
+    shotIndex: t.shot_index,
+    kept: t.kept,
+    score: t.score,
+    breakdown: t.features?.breakdown ?? null,
+    durationSeconds: t.duration_seconds,
+    trim: { start: trim.start, end: trim.end, edited: t.trim_start != null },
+    captionEdits: t.caption_edits ?? {},
+    words: words.map((w, i) => ({ text: toHinglish(w.text), start: w.start, end: w.end, filler: fillers.has(i) })),
+  };
+}
+
+// Save a take's trim and caption fixes. trimStart/trimEnd null resets to the automatic trim.
+app.patch('/api/takes/:id', requireUser, async (req, res, next) => {
+  try {
+    const take = await ownTake(req.params.id, req.user.id);
+    if (!take) return res.status(404).json({ error: 'Take not found' });
+    const body = req.body ?? {};
+    let { trim_start: start, trim_end: end, caption_edits: edits } = take;
+    if ('trimStart' in body || 'trimEnd' in body) {
+      if (body.trimStart == null || body.trimEnd == null) {
+        start = end = null;
+      } else {
+        const duration = take.duration_seconds ?? Infinity;
+        start = Math.max(0, Number(body.trimStart));
+        end = Math.min(duration, Number(body.trimEnd));
+        if (!Number.isFinite(start) || !Number.isFinite(end) || end - start < 0.5) {
+          return res.status(400).json({ error: 'Keep at least half a second of the take' });
+        }
+      }
+    }
+    if ('captionEdits' in body) {
+      const count = (take.words ?? []).length;
+      edits = {};
+      for (const [k, v] of Object.entries(body.captionEdits ?? {})) {
+        const i = Number(k);
+        if (Number.isInteger(i) && i >= 0 && i < count && typeof v === 'string') edits[i] = v.trim().slice(0, 40);
+      }
+    }
+    const { rows: [updated] } = await pool.query(
+      'UPDATE takes SET trim_start = $2, trim_end = $3, caption_edits = $4 WHERE id = $1 RETURNING *',
+      [take.id, start, end, edits && Object.keys(edits).length ? JSON.stringify(edits) : null],
+    );
+    res.json({ take: { ...editableTake(updated), available: await fileExists(updated.file_path) } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Thumbnails, made with ffmpeg on first request and kept next to the take.
+async function takeImage(req, res, next, kind) {
+  try {
+    const take = await ownTake(req.params.id, req.user.id);
+    if (!take || !(await fileExists(take.file_path))) return res.status(404).json({ error: 'Take not available' });
+    const out = `${take.file_path}.${kind}.jpg`;
+    if (!(await fileExists(out))) {
+      const duration = take.duration_seconds ?? 1;
+      if (kind === 'poster') await extractPoster(take.file_path, out, Math.min(0.8, duration / 3));
+      else await extractStrip(take.file_path, out, duration);
+    }
+    res.sendFile(out, { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=3600' } });
+  } catch (err) {
+    next(err);
+  }
+}
+app.get('/api/takes/:id/poster', requireUser, (req, res, next) => takeImage(req, res, next, 'poster'));
+app.get('/api/takes/:id/strip', requireUser, (req, res, next) => takeImage(req, res, next, 'strip'));
+
 // A kept take's video, for showing it again after the app reloads.
 app.get('/api/takes/:id/file', requireUser, async (req, res, next) => {
   try {
@@ -425,6 +525,7 @@ app.get('/api/takes/:id/file', requireUser, async (req, res, next) => {
   }
 });
 
+// Re-upload a kept take whose file is gone (Render's disk is wiped on restart).
 app.put('/api/takes/:id/file', requireUser, videoUpload.single('video'), async (req, res, next) => {
   if (!req.file) return res.status(400).json({ error: 'Send the video in the "video" field' });
   let stored = false;

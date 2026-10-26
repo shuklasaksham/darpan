@@ -1,17 +1,22 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { checkFrame, keepTake, writeScript, uploadTake } from '../api.js';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { checkFrame, keepTake, posterUrl, uploadTake } from '../api.js';
 import Reel from './Reel.jsx';
+import TakeReview from './TakeReview.jsx';
 import { pickMimeType, stopStream } from '../media.js';
 import { FrameGuide } from '../camera/silhouette.jsx';
 import { framingFor, headRegion, targetsFor } from '../camera/framing.js';
 import { detectFace, eyeLookDown, loadFaceDetector, loadFaceLandmarker, loadPoseLandmarker } from '../camera/vision.js';
 import { bodyGeometry, faceGeometry, framingProblems, lightProblems, lightReadings, soundProblems } from '../camera/checks.js';
 import { ProblemTracker, SoundMeter, Speaker, tipText } from '../camera/coach.js';
+import Glyph from '../ui/Glyph.jsx';
+import { formatTime, readPref, writePref } from '../ui/parts.jsx';
 
 const VIDEO_TYPES = ['video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
 const ASPECTS = { '9:16': 9 / 16, '4:5': 4 / 5, '1:1': 1, '16:9': 16 / 9 };
 const FRAMING_IDS = new Set(['no_face', 'no_body', 'raise_phone', 'lower_phone', 'show_feet', 'come_closer', 'move_back', 'step_left', 'step_right']);
 const LIGHT_IDS = new Set(['backlight', 'face_dark', 'face_bright', 'room_dark']);
+const TIP_GLYPHS = { backlight: 'light', face_dark: 'light', face_bright: 'light', room_dark: 'light', claude_light: 'light' };
+const TIMERS = [3, 10, 0]; // countdown seconds; 0 records straight away
 const TICK_MS = 200;
 const TICK_RECORDING_MS = 400;
 const DETECT_EDGE = 360; // long edge of the frame the models see
@@ -32,26 +37,10 @@ function sizeFor(aspect, edge) {
   return aspect < 1 ? [Math.round(edge * aspect), edge] : [edge, Math.round(edge / aspect)];
 }
 
-function fallbackScript({ idea, format, language }) {
-  return {
-    title: idea || format || 'Your reel',
-    hook: '',
-    trend_used: '',
-    language,
-    shots: [
-      {
-        title: 'Your take',
-        framing: format === 'Day in my life' ? 'full_body' : 'medium',
-        pose: 'talking_gesture',
-        line: idea || 'Say your idea in your own words.',
-        direction: 'Look into the lens and talk like you would to a friend.',
-        duration_seconds: 30,
-      },
-    ],
-    background: null,
-    lighting: null,
-  };
-}
+const everyShotKept = (plan, kept) => {
+  const n = plan?.script?.shots?.length ?? 0;
+  return n > 0 && Array.from({ length: n }, (_, i) => kept?.[i]?.takeId).every(Boolean);
+};
 
 export default function Camera({ shoot, planned: initialPlan, initialKept, health, onClose }) {
   const debug = useMemo(() => new URLSearchParams(window.location.search).has('debug'), []);
@@ -65,19 +54,24 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   const closedRef = useRef(false);
   const statsRef = useRef(null); // loudness, gaze and frames gathered during a take
   const meterRef = useRef(null);
+  const levelRef = useRef(null); // latest loudness reading, for the teleprompter
   const loudTimerRef = useRef(0);
 
   const [facing, setFacing] = useState('user');
   const [aspectKey, setAspectKey] = useState('9:16');
   const [showAspects, setShowAspects] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
+  const [permission, setPermission] = useState('checking'); // checking | ask | go | blocked
   const [cameraError, setCameraError] = useState('');
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
-  const [take, setTake] = useState(null); // { status, url, result?, error? }
+  const [take, setTake] = useState(null); // { status, url, blob, progress?, result?, error? }
   const [countdown, setCountdown] = useState(0);
+  const [timer, setTimer] = useState(() => readPref('timer', 3));
+  const [promptSize, setPromptSize] = useState(() => readPref('promptSize', 1));
   const [kept, setKept] = useState(initialKept ?? {}); // shotIndex -> { takeId, blob, url, result }
-  const [reelOpen, setReelOpen] = useState(false);
+  // Resuming a shoot whose shots are all kept goes straight to the reel.
+  const [reelOpen, setReelOpen] = useState(() => everyShotKept(initialPlan, initialKept));
   const [lostNotice, setLostNotice] = useState(0); // takes lost on the server, to re-record
   const keptRef = useRef(kept);
   keptRef.current = kept;
@@ -88,8 +82,6 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   );
 
   const [planned, setPlanned] = useState(initialPlan); // { planId, script }, finalised on the Script screen
-  const [scriptState, setScriptState] = useState('ready');
-  const [scriptError, setScriptError] = useState('');
   const [showScript, setShowScript] = useState(false);
   // Resume on the first shot that still needs a take.
   const [shotIndex, setShotIndex] = useState(() => {
@@ -102,7 +94,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   const [tip, setTip] = useState(null); // { id, text }
   const [matched, setMatched] = useState(false);
   const [claude, setClaude] = useState(null); // last frame verdict
-  const [muted, setMuted] = useState(false);
+  const [muted, setMuted] = useState(() => !readPref('voiceTips', true));
   const [debugInfo, setDebugInfo] = useState(null);
 
   const aspect = ASPECTS[aspectKey];
@@ -114,10 +106,6 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   // Values the analysis loop reads without being restarted.
   const live = useRef({});
   live.current = { aspect, framing, recording, countdown, language, planned, shotIndex, muted, aspectKey, facing };
-
-  // --- Script -------------------------------------------------------------
-
-
 
   // Keep the screen awake while the camera is open (Android Chrome, iOS 16.4+).
   useEffect(() => {
@@ -139,15 +127,28 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
 
   // --- Camera ---------------------------------------------------------------
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    closedRef.current = false; // StrictMode mounts twice in development
+    return () => {
       closedRef.current = true;
-    },
-    [],
-  );
+    };
+  }, []);
+
+  // Ask first, in Darpan's words, when the browser hasn't been asked yet.
+  useEffect(() => {
+    let alive = true;
+    const query = navigator.permissions?.query?.({ name: 'camera' });
+    if (!query) return setPermission('go');
+    query
+      .then((s) => alive && setPermission(s.state === 'prompt' ? 'ask' : s.state === 'denied' ? 'blocked' : 'go'))
+      .catch(() => alive && setPermission('go'));
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // The camera is only on while shooting: off during take review and the reel screen.
-  const cameraOn = !take && !reelOpen;
+  const cameraOn = !take && !reelOpen && permission === 'go';
 
   useEffect(() => {
     let cancelled = false;
@@ -172,7 +173,11 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
         const zoom = track?.getCapabilities?.().zoom;
         if (zoom) track.applyConstraints({ advanced: [{ zoom: zoom.min }] }).catch(() => {});
       })
-      .catch(() => !cancelled && setCameraError('Allow camera and microphone access to start shooting.'));
+      .catch((err) => {
+        if (cancelled) return;
+        if (err?.name === 'NotAllowedError' || err?.name === 'SecurityError') setPermission('blocked');
+        else setCameraError("Couldn't start the camera. Close other apps using it and try again.");
+      });
     return () => {
       cancelled = true;
       if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
@@ -487,7 +492,8 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
     speakerRef.current?.stop();
     setShowAspects(false);
     setTake(null);
-    setCountdown(3);
+    if (timer > 0) setCountdown(timer);
+    else startRecording();
   }
 
   function startRecording() {
@@ -521,6 +527,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
       mixed.getVideoTracks().forEach((t) => t.stop());
       const durationSeconds = (Date.now() - startedAtRef.current) / 1000;
       clearInterval(loudTimerRef.current);
+      levelRef.current = null;
       const stats = statsRef.current;
       statsRef.current = null;
       const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'video/webm' });
@@ -529,13 +536,16 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
     recorderRef.current = recorder;
     startedAtRef.current = Date.now();
     statsRef.current = { startedAt: startedAtRef.current, loudness: [], gaze: [], frames: [], lastFrameAt: 0 };
-    // Loudness 10 times a second, to see how much the voice rises and falls.
+    // Loudness 10 times a second, to see how much the voice rises and falls
+    // (and to move the teleprompter along while the creator speaks).
     loudTimerRef.current = setInterval(() => {
       const meter = meterRef.current;
       const st = statsRef.current;
       if (!meter || !st) return;
       const now = Date.now();
-      st.loudness.push([(now - st.startedAt) / 1000, Math.round(meter.read(now).rmsDb * 10) / 10]);
+      const reading = meter.read(now);
+      levelRef.current = reading;
+      st.loudness.push([(now - st.startedAt) / 1000, Math.round(reading.rmsDb * 10) / 10]);
     }, 100);
     setSeconds(0);
     setTake(null);
@@ -549,31 +559,47 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
     setRecording(false);
   }
 
+  const lastSend = useRef(null);
   async function send(blob, durationSeconds, stats) {
     const url = URL.createObjectURL(blob);
-    setTake({ status: 'uploading', url, blob });
+    const args = { blob, durationSeconds, stats, url, shotIndex };
+    lastSend.current = args;
+    await upload(args);
+  }
+
+  async function upload({ blob, durationSeconds, stats, url, shotIndex: forShot }) {
+    setTake({ status: 'uploading', url, blob, progress: 0 });
     try {
-      const result = await uploadTake(blob, {
-        planId: planned?.planId,
-        plan: planned?.planId ? undefined : planned?.script,
-        shotIndex: shot ? shotIndex : undefined,
-        durationSeconds,
-        language,
-        loudness: stats?.loudness,
-        gaze: stats?.gaze,
-        frames: pickFrames(stats?.frames ?? []),
-      });
+      const result = await uploadTake(
+        blob,
+        {
+          planId: planned?.planId,
+          plan: planned?.planId ? undefined : planned?.script,
+          shotIndex: shots[forShot] ? forShot : undefined,
+          durationSeconds,
+          language,
+          loudness: stats?.loudness,
+          gaze: stats?.gaze,
+          frames: pickFrames(stats?.frames ?? []),
+        },
+        (progress) => setTake((t) => (t?.url === url ? { ...t, progress } : t)),
+      );
       if (closedRef.current) return;
-      setTake({ status: 'done', url, blob, result });
+      setTake({ status: 'done', url, blob, result, progress: 1 });
       // Darpan reads the top note aloud.
       const top = result.notes?.[0];
       if (top && !live.current.muted) {
         speakerRef.current?.say(top.note_spoken || top.note, language === 'English' ? 'en-IN' : 'hi-IN');
       }
     } catch (err) {
-      setTake({ status: 'error', url, blob, error: err.message });
+      if (closedRef.current) return;
+      setTake({ status: err.offline ? 'offline' : 'error', url, blob, error: err.message });
     }
   }
+
+  const retryUpload = useCallback(() => {
+    if (lastSend.current) upload(lastSend.current);
+  }, [planned]);
 
   function closeTake() {
     speakerRef.current?.stop();
@@ -599,6 +625,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
 
   const allKept = shots.length > 0 && shots.every((_, i) => kept[i]?.takeId);
   const keepFinishes = shots.every((_, i) => i === shotIndex || kept[i]);
+  const lastKept = [...shots.keys()].reverse().map((i) => kept[i]).find(Boolean);
 
   function onPickFile(e) {
     const file = e.target.files?.[0];
@@ -609,54 +636,116 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   // --- UI -----------------------------------------------------------------
 
   const script = planned?.script;
+  const planSeconds = Number(shot?.duration_seconds) || 0;
+  const busy = recording || countdown > 0;
+
+  if ((permission === 'ask' || permission === 'blocked') && !take && !reelOpen) {
+    return (
+      <CameraPermission
+        blocked={permission === 'blocked'}
+        shotLabel={shots.length ? `Shot ${shotIndex + 1} of ${shots.length}` : ''}
+        onAllow={() => setPermission('go')}
+        onClose={onClose}
+        onPickFile={onPickFile}
+      />
+    );
+  }
 
   return (
-    <div className={`camera ${take ? 'reviewing' : ''}`}>
-      <div className="stage" style={{ '--aspect': aspect }}>
-        <video
-          ref={videoRef}
-          className={mirrored ? 'mirrored' : ''}
-          autoPlay
-          playsInline
-          muted
-          onLoadedMetadata={() => setVideoReady(true)}
-        />
-        {shot && !recording && (
-          <FrameGuide framing={framing} aspect={aspect} matched={matched} />
-        )}
-        {debug && debugInfo && <DebugOverlay info={debugInfo} aspect={aspect} mirrored={mirrored} />}
-      </div>
-
-      <div className="camera-top">
-        <button className="icon" onClick={onClose} aria-label="Close camera">✕</button>
-        {shots.length > 1 ? (
-          <div className="shot-nav">
-            <button className="icon" onClick={() => setShotIndex((i) => i - 1)} disabled={shotIndex === 0 || recording} aria-label="Previous shot">‹</button>
-            <span>
-              {shotIndex + 1}/{shots.length}
-              {kept[shotIndex] ? ' ✓' : ''}
-            </span>
-            <button className="icon" onClick={() => setShotIndex((i) => i + 1)} disabled={shotIndex === shots.length - 1 || recording} aria-label="Next shot">›</button>
-          </div>
-        ) : (
-          <span className="spacer" />
-        )}
-        <div className="top-actions">
-          <button className="icon pill" onClick={() => setShowAspects((v) => !v)} disabled={recording} aria-label="Aspect ratio">
-            {aspectKey}
-          </button>
-          <button className="icon" onClick={() => setMuted((m) => !m)} aria-label={muted ? 'Turn voice tips on' : 'Turn voice tips off'}>
-            {muted ? '🔇' : '🔊'}
-          </button>
-          {script && (
-            <button className="icon" onClick={() => setShowScript(true)} disabled={recording} aria-label="Show script">
-              ☰
-            </button>
-          )}
+    <div className="camera studio">
+      <div className="stage">
+        <div className="stage-frame" style={{ '--aspect': aspect }}>
+          <video ref={videoRef} className={mirrored ? 'mirrored' : ''} autoPlay playsInline muted onLoadedMetadata={() => setVideoReady(true)} />
+          {shot && !recording && <FrameGuide framing={framing} aspect={aspect} matched={matched} />}
+          {debug && debugInfo && <DebugOverlay info={debugInfo} aspect={aspect} mirrored={mirrored} />}
         </div>
       </div>
+      <div className="cam-scrim-top" aria-hidden="true" />
 
-      {showAspects && (
+      <div className="cam-top">
+        <div className="row">
+          <button className="cam-btn" onClick={onClose} aria-label="Close camera" disabled={recording}>
+            <Glyph name="x" size={22} />
+          </button>
+          <span className="shot-title">
+            {shots.length ? `Shot ${shotIndex + 1} of ${shots.length}${shot?.title ? ` · ${shot.title}` : ''}` : 'Your take'}
+          </span>
+        </div>
+        {shots.length > 1 && (
+          <div className="segments cam" role="tablist" aria-label="Shots">
+            {shots.map((s, i) => (
+              <button
+                key={i}
+                role="tab"
+                aria-selected={i === shotIndex}
+                aria-label={`Shot ${i + 1}: ${s.title}${kept[i] ? ', kept' : ''}`}
+                disabled={busy}
+                onClick={() => setShotIndex(i)}
+                style={{ all: 'unset', flex: 1, padding: '8px 0', cursor: 'pointer' }}
+              >
+                <i className={kept[i] && i !== shotIndex ? 'on' : ''} style={{ display: 'block' }}>
+                  {i === shotIndex && <b style={{ width: recording && planSeconds ? `${Math.min(100, (seconds / planSeconds) * 100)}%` : '100%' }} />}
+                </i>
+              </button>
+            ))}
+          </div>
+        )}
+        {shot && (
+          <Teleprompter
+            shot={shot}
+            next={shots[shotIndex + 1]}
+            recording={recording}
+            levelRef={levelRef}
+            size={promptSize}
+          />
+        )}
+        {recording && (
+          <span className="rec-time" aria-live="off">
+            {formatTime(seconds)}
+            {planSeconds ? ` / ${formatTime(planSeconds)}` : ''}
+          </span>
+        )}
+      </div>
+
+      {!recording && (
+        <div className="tool-rail">
+          <button className="cam-btn" onClick={() => setFacing((f) => (f === 'user' ? 'environment' : 'user'))} disabled={busy} aria-label="Flip camera">
+            <Glyph name="flip" size={22} />
+          </button>
+          <button className={`cam-btn ${showAspects ? 'on' : ''}`} onClick={() => setShowAspects((v) => !v)} disabled={busy} aria-label={`Aspect ratio ${aspectKey}`}>
+            {aspectKey}
+          </button>
+          <button
+            className="cam-btn"
+            onClick={() => {
+              const next = (promptSize + 1) % 3;
+              setPromptSize(next);
+              writePref('promptSize', next);
+            }}
+            aria-label="Teleprompter text size"
+            style={{ fontSize: [13, 15, 18][promptSize] }}
+          >
+            Aa
+          </button>
+          <button
+            className="cam-btn"
+            onClick={() => {
+              const next = TIMERS[(TIMERS.indexOf(timer) + 1) % TIMERS.length];
+              setTimer(next);
+              writePref('timer', next);
+            }}
+            disabled={busy}
+            aria-label={timer ? `Countdown ${timer} seconds` : 'No countdown'}
+          >
+            {timer ? `${timer}s` : 'Off'}
+          </button>
+          <button className="cam-btn" onClick={() => setMuted((m) => !m)} aria-label={muted ? 'Turn spoken tips on' : 'Turn spoken tips off'}>
+            <Glyph name={muted ? 'muted' : 'speaker'} size={22} />
+          </button>
+        </div>
+      )}
+
+      {showAspects && !busy && (
         <div className="aspect-menu" role="group" aria-label="Aspect ratio">
           {Object.keys(ASPECTS).map((key) => (
             <button
@@ -673,50 +762,13 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
         </div>
       )}
 
-      {shot && <Teleprompter shot={shot} recording={recording} />}
-
-      <div className="camera-lower">
-        {lostNotice > 0 && !recording && (
-          <p className="coach-tip" onClick={() => setLostNotice(0)}>
-            {lostNotice === 1 ? 'This shot needs' : `${lostNotice} shots need`} recording again: the server lost the take. Tap record when ready.
-          </p>
-        )}
-        {visionState === 'off' && <p className="coach-tip muted">Live checks aren't available on this phone. You can still record.</p>}
-        {tip && !countdown && <p className={`coach-tip ${recording ? 'silent' : ''}`}>{tip.text}</p>}
-        {!recording && !tip && visionState === 'ready' && shot && <p className="coach-tip good">Looking good. Tap record when ready.</p>}
-        {!recording && claude && !claude.error && <ClaudeCard result={claude} onClose={() => setClaude(null)} />}
-      </div>
-
-      {scriptState === 'loading' && (
-        <div className="sheet">
-          <p className="pulse">Darpan is writing your script…</p>
-          <p className="muted">Checking what's trending for your niche and planning only the shots you need.</p>
+      {!recording && !countdown && claude && !claude.error && (
+        <div className="coach-stack">
+          <LookCard result={claude} onClose={() => setClaude(null)} />
         </div>
       )}
-      {scriptState === 'error' && (
-        <div className="sheet">
-          <p className="error">{scriptError}</p>
-          <div className="row">
-            <button onClick={requestScript}>Try again</button>
-            <button
-              className="primary"
-              onClick={() => {
-                setPlanned({ planId: null, script: fallbackScript(shoot) });
-                setScriptState('ready');
-              }}
-            >
-              Shoot without a script
-            </button>
-          </div>
-        </div>
-      )}
-      {showScript && script && <ScriptSheet
-          script={script}
-          onStart={() => {
-            speakerRef.current?.unlock();
-            setShowScript(false);
-          }}
-        />}
+
+      {!countdown && <CoachPill tip={tip} recording={recording} visionState={visionState} hasShot={Boolean(shot)} lostNotice={lostNotice} onDismissLost={() => setLostNotice(0)} />}
 
       {countdown > 0 && (
         <div className="countdown" aria-live="assertive">
@@ -724,52 +776,83 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
         </div>
       )}
 
-      {take && (
-        <TakeReview take={take} isLast={keepFinishes} onRetake={closeTake} onKeep={keepAndNext} />
-      )}
-
-      <div className="camera-bottom">
+      <div className="cam-bottom">
         {cameraError ? (
-          <div className="stack center">
+          <div className="stack" style={{ width: '100%', textAlign: 'center' }}>
             <p>{cameraError}</p>
-            <label className="record">
+            <label className="button primary">
               Use the phone camera instead
               <input type="file" accept="video/*" capture="user" onChange={onPickFile} hidden />
             </label>
           </div>
         ) : (
           <>
-            {allKept && !recording && !countdown ? (
-              <button className="pill-button" onClick={() => setReelOpen(true)}>
-                Your reel
-              </button>
-            ) : (
-              <span className="timer">{recording ? formatTime(seconds) : framingFor(framing).label}</span>
-            )}
+            <span className="slot">
+              {lastKept && !busy && (
+                <button
+                  className="kept-thumb"
+                  onClick={() => allKept && setReelOpen(true)}
+                  aria-label={allKept ? 'Open your reel' : `${Object.keys(kept).length} of ${shots.length} shots kept`}
+                >
+                  <img src={posterUrl(lastKept.takeId)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <b>
+                    {Object.keys(kept).length}/{shots.length}
+                  </b>
+                </button>
+              )}
+            </span>
             <button
               className={`shutter ${recording ? 'recording' : ''}`}
               onClick={recording ? stopRecording : countdown ? () => setCountdown(0) : startCountdown}
-              disabled={!videoReady || Boolean(take) || showScript || reelOpen || scriptState !== 'ready'}
+              disabled={!videoReady || Boolean(take) || showScript || reelOpen}
               aria-label={recording ? 'Stop recording' : countdown ? 'Cancel countdown' : 'Start recording'}
             />
-            <button
-              className="icon"
-              onClick={() => setFacing((f) => (f === 'user' ? 'environment' : 'user'))}
-              disabled={recording || countdown > 0}
-              aria-label="Flip camera"
-            >
-              ⟲
-            </button>
+            <span className="slot">
+              {!busy &&
+                (allKept ? (
+                  <button className="cam-btn" style={{ width: 52, height: 52 }} onClick={() => setReelOpen(true)} aria-label="Your reel">
+                    <Glyph name="reel" />
+                  </button>
+                ) : (
+                  script && (
+                    <button className="cam-btn" style={{ width: 52, height: 52 }} onClick={() => setShowScript(true)} aria-label="Read the whole script">
+                      <Glyph name="script" />
+                    </button>
+                  )
+                ))}
+            </span>
           </>
         )}
       </div>
 
+      {showScript && script && <ScriptSheet script={script} onClose={() => setShowScript(false)} />}
+
+      {take && (
+        <TakeReview
+          take={take}
+          shot={shots[lastSend.current?.shotIndex ?? shotIndex]}
+          shotIndex={lastSend.current?.shotIndex ?? shotIndex}
+          isLast={keepFinishes}
+          speaker={speakerRef.current}
+          onRetake={closeTake}
+          onKeep={keepAndNext}
+          onRetry={retryUpload}
+        />
+      )}
+
       {reelOpen && allKept && (
         <Reel
+          planId={planned?.planId}
+          caption={[script?.caption, ...(Array.isArray(script?.hashtags) ? script.hashtags : [])].filter(Boolean).join(' ')}
           shots={shots}
           kept={kept}
+          onKeptChange={setKept}
           onBack={() => setReelOpen(false)}
           onDone={onClose}
+          onReshoot={(i) => {
+            setReelOpen(false);
+            setShotIndex(i);
+          }}
           onMissing={(takeIds) => {
             const lost = Object.entries(kept).filter(([, k]) => takeIds.includes(k.takeId)).map(([i]) => Number(i));
             setKept((current) => Object.fromEntries(Object.entries(current).filter(([i]) => !lost.includes(Number(i)))));
@@ -785,67 +868,184 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   );
 }
 
-/** The current line, big, at the top near the lens. Long lines scroll while recording. */
-function Teleprompter({ shot, recording }) {
-  const outerRef = useRef(null);
-  const innerRef = useRef(null);
-  const [style, setStyle] = useState({});
+function CoachPill({ tip, recording, visionState, hasShot, lostNotice, onDismissLost }) {
+  if (lostNotice > 0 && !recording) {
+    return (
+      <button className="coach-pill" onClick={onDismissLost} style={{ border: 0, minHeight: 0 }}>
+        <Glyph name="alert" size={18} />
+        {lostNotice === 1 ? 'This shot needs' : `${lostNotice} shots need`} recording again: its take expired.
+      </button>
+    );
+  }
+  if (visionState === 'off' && !recording) {
+    return <p className="coach-pill quiet">Live checks aren’t available on this phone. You can still record.</p>;
+  }
+  if (tip) {
+    return (
+      <p className={`coach-pill ${recording ? 'quiet' : ''}`} aria-live="polite">
+        <Glyph name={TIP_GLYPHS[tip.id] ?? 'frame'} size={18} />
+        {tip.text}
+      </p>
+    );
+  }
+  if (!recording && visionState === 'ready' && hasShot) {
+    return (
+      <p className="coach-pill good" aria-live="polite">
+        <Glyph name="check" size={18} /> Perfect. Hold it there
+      </p>
+    );
+  }
+  return null;
+}
+
+/**
+ * The current line near the lens. While recording it follows the creator's
+ * voice: it moves on while they're speaking and waits while they pause. It
+ * listens to loudness, not words, so it keeps pace rather than reading along.
+ */
+function Teleprompter({ shot, next, recording, levelRef, size }) {
+  const words = useMemo(() => (shot.line || '').split(/\s+/).filter(Boolean), [shot.line]);
+  const [pos, setPos] = useState(0); // words spoken so far, fractional
+  const boxRef = useRef(null);
+  const textRef = useRef(null);
+  const nowRef = useRef(null);
+
+  useEffect(() => setPos(0), [shot, recording]);
+
+  useEffect(() => {
+    if (!recording || !words.length) return;
+    // Pace from the planned length, kept to how fast people actually talk.
+    const planned = Number(shot.duration_seconds) || words.length / 2.5;
+    const rate = Math.min(3.6, Math.max(1.8, words.length / Math.max(1, planned * 0.85)));
+    let last = performance.now();
+    const id = setInterval(() => {
+      const now = performance.now();
+      const dt = (now - last) / 1000;
+      last = now;
+      const l = levelRef.current;
+      const voiced = l && l.rmsDb > Math.max(-48, (l.floorDb ?? -70) + 6);
+      if (voiced) setPos((p) => Math.min(words.length, p + rate * dt));
+    }, 100);
+    return () => clearInterval(id);
+  }, [recording, shot, words.length, levelRef]);
+
+  const current = Math.min(words.length - 1, Math.floor(pos));
 
   useLayoutEffect(() => {
-    const overflow = innerRef.current.scrollHeight - outerRef.current.clientHeight;
-    if (recording && overflow > 0) {
-      const seconds = Math.max(4, Number(shot.duration_seconds) || 10);
-      setStyle({ transform: `translateY(-${overflow}px)`, transition: `transform ${seconds}s linear 1s` });
-    } else {
-      setStyle({ transform: 'translateY(0)', transition: 'none' });
-    }
-  }, [recording, shot]);
+    const box = boxRef.current;
+    const el = nowRef.current;
+    if (!box || !textRef.current) return;
+    // Keep one line of what was said above the current word; never scroll past the end.
+    const overflow = textRef.current.offsetHeight - box.clientHeight;
+    const offset = recording && el && overflow > 0 ? Math.min(overflow, Math.max(0, el.offsetTop - el.offsetHeight)) : 0;
+    textRef.current.style.transform = `translateY(-${offset}px)`;
+  }, [current, recording, size]);
 
   return (
-    <div className="teleprompter" ref={outerRef}>
-      <p ref={innerRef} style={style}>
-        {shot.line}
-      </p>
+    <div className={`teleprompter size-${size} ${recording ? '' : 'idle'}`}>
+      <div className="lines" ref={boxRef}>
+        <p ref={textRef}>
+          {words.map((w, i) => (
+            <span key={i} ref={i === current ? nowRef : null} className={!recording ? '' : i < current ? 'said' : i === current ? 'now' : ''}>
+              {w}{' '}
+            </span>
+          ))}
+        </p>
+      </div>
+      {recording && next?.line && <p className="small muted" style={{ marginTop: 6, fontFamily: 'var(--font-body)', fontSize: 13 }}>Next: {next.line.split(/\s+/).slice(0, 5).join(' ')}…</p>}
+      <span className="hint">{recording ? 'Following your voice' : 'Scrolls with your voice · Aa to resize'}</span>
     </div>
   );
 }
 
-function ScriptSheet({ script, onStart }) {
+function ScriptSheet({ script, onClose }) {
   return (
-    <div className="sheet script-sheet">
-      <h2>{script.title}</h2>
-      {script.trend_used && <p className="tag-line">Trend: {script.trend_used}</p>}
-      <ol className="script-shots">
-        {script.shots.map((s, i) => (
-          <li key={i}>
-            <strong>{s.title}</strong> <span className="muted">· {framingFor(s.framing).label}</span>
-            <p className="say">“{s.line}”</p>
-            {s.direction && <p className="muted">{s.direction}</p>}
-          </li>
-        ))}
-      </ol>
-      {script.background && (
-        <section>
-          <h3>Background</h3>
-          <p>{script.background.suggestion}</p>
-          {script.background.avoid?.length > 0 && <p className="muted">Avoid: {script.background.avoid.join(', ')}</p>}
-        </section>
-      )}
-      {script.lighting && (
-        <section>
-          <h3>Lighting</h3>
-          <p>{script.lighting.suggestion}</p>
-          {script.lighting.avoid?.length > 0 && <p className="muted">Avoid: {script.lighting.avoid.join(', ')}</p>}
-        </section>
-      )}
-      <button className="primary" onClick={onStart}>
-        Start shooting
-      </button>
+    <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label="Your script" onClick={onClose}>
+      <div className="sheet studio" onClick={(e) => e.stopPropagation()}>
+        <h2>{script.title}</h2>
+        <ol className="shot-list">
+          {script.shots.map((s, i) => (
+            <li key={i} className="shot-row" style={{ display: 'block' }}>
+              <p className="eyebrow">
+                Shot {i + 1} · {s.title} <span className="muted">· {framingFor(s.framing).label}</span>
+              </p>
+              <p className="say">“{s.line}”</p>
+              {s.direction && <p className="meta">{s.direction}</p>}
+            </li>
+          ))}
+        </ol>
+        {script.lighting && (
+          <p className="row" style={{ alignItems: 'flex-start' }}>
+            <Glyph name="light" size={22} /> {script.lighting.suggestion}
+          </p>
+        )}
+        {script.background && (
+          <p className="row" style={{ alignItems: 'flex-start' }}>
+            <Glyph name="frame" size={22} /> {script.background.suggestion}
+          </p>
+        )}
+        <button className="primary block" onClick={onClose}>
+          Back to shooting
+        </button>
+      </div>
     </div>
   );
 }
 
-function ClaudeCard({ result, onClose }) {
+/** Asks for the camera in Darpan's words first; if it's blocked, how to unblock it. */
+function CameraPermission({ blocked, shotLabel, onAllow, onClose, onPickFile }) {
+  return (
+    <div className="studio" style={{ minHeight: '100dvh' }}>
+      <main className="screen with-bar">
+        <header className="topbar">
+          <button className="icon-btn" onClick={onClose} aria-label="Close">
+            <Glyph name="x" />
+          </button>
+          <span className="title">{shotLabel}</span>
+        </header>
+        {blocked ? (
+          <div className="stack loose">
+            <h1>The camera is blocked</h1>
+            <p className="muted" style={{ fontSize: 17 }}>Darpan can’t start without your camera and mic. Turn them on for this site, then come back.</p>
+            <div className="stack">
+              <h3>Chrome on Android</h3>
+              <ol className="steps">
+                <li>Tap the lock left of the address</li>
+                <li>Permissions → Camera and Microphone → Allow</li>
+              </ol>
+            </div>
+            <div className="stack">
+              <h3>Safari on iPhone</h3>
+              <ol className="steps">
+                <li>Tap aA in the address bar</li>
+                <li>Website Settings → Camera and Microphone → Allow</li>
+              </ol>
+            </div>
+            <label className="link strong" style={{ flexDirection: 'row', cursor: 'pointer', fontSize: 15 }}>
+              Or record with your phone’s camera app
+              <input type="file" accept="video/*" capture="user" onChange={onPickFile} hidden />
+            </label>
+          </div>
+        ) : (
+          <div className="big-state">
+            <Glyph name="shoot" size={48} />
+            <h1>Let Darpan see and hear you</h1>
+            <p className="muted" style={{ fontSize: 17 }}>
+              Your browser will ask for the camera and mic next. Framing and light tips run on this phone; only the takes you record are uploaded.
+            </p>
+          </div>
+        )}
+        <div className="action-bar">
+          <button className="primary" onClick={blocked ? () => window.location.reload() : onAllow}>
+            {blocked ? 'I’ve allowed it, try again' : 'Allow camera and mic'}
+          </button>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function LookCard({ result, onClose }) {
   const rows = [
     ['Light', result.light],
     ['Framing', result.framing],
@@ -853,16 +1053,21 @@ function ClaudeCard({ result, onClose }) {
     ['Angle', result.angle],
   ];
   return (
-    <div className="claude-card">
+    <div className="look-card">
       <div className="row between">
         <strong>Darpan took a look</strong>
-        <button className="icon small" onClick={onClose} aria-label="Dismiss">✕</button>
+        <button className="icon-btn bare" style={{ width: 32, height: 32, minHeight: 32 }} onClick={onClose} aria-label="Dismiss">
+          <Glyph name="x" size={18} />
+        </button>
       </div>
       <ul>
         {rows.map(([label, v]) => (
           <li key={label} className={v.ok ? 'ok' : 'fix'}>
-            {v.ok ? '✓' : '•'} {label}
-            {!v.ok && v.tip ? `: ${v.tip}` : ''}
+            <Glyph name={v.ok ? 'check' : 'alert'} size={16} />
+            <span>
+              {label}
+              {!v.ok && v.tip ? `: ${v.tip}` : ''}
+            </span>
           </li>
         ))}
       </ul>
@@ -876,55 +1081,6 @@ function pickFrames(frames) {
   const usable = frames.filter(([t]) => t >= 0.5);
   const list = usable.length >= 3 ? usable : frames;
   return [list[0], list[Math.floor(list.length / 2)], list[list.length - 1]].map(([, data]) => data);
-}
-
-function TakeReview({ take, isLast, onRetake, onKeep }) {
-  const result = take.result;
-  const band = (score) => (score >= 80 ? 'high' : score >= 60 ? 'mid' : 'low');
-  return (
-    <div className="sheet take-review">
-      <video src={take.url} className="take-video" controls playsInline autoPlay muted loop />
-      {take.status === 'uploading' && <p className="pulse">Darpan is watching your take…</p>}
-      {take.status === 'error' && <p className="error">{take.error}</p>}
-      {take.status === 'done' && (
-        <>
-          <div className="score-row">
-            <span className={`score ${band(result.score)}`}>
-              {(result.score / 10).toFixed(1)}
-              <small>/10</small>
-            </span>
-            <div>
-              <strong>Director&apos;s notes</strong>
-              {result.praise && <p className="muted">{result.praise}</p>}
-            </div>
-          </div>
-          {result.notes?.length ? (
-            <ol className="notes">
-              {result.notes.map((n, i) => (
-                <li key={i}>{n.note}</li>
-              ))}
-            </ol>
-          ) : (
-            <p>That&apos;s a keeper. Nothing to fix.</p>
-          )}
-          {result.transcript && (
-            <details>
-              <summary className="muted">What Darpan heard</summary>
-              <p>{result.transcript}</p>
-            </details>
-          )}
-        </>
-      )}
-      <div className="row">
-        <button onClick={onRetake} disabled={take.status === 'uploading'}>
-          Retake
-        </button>
-        <button className="primary" onClick={onKeep} disabled={take.status === 'uploading'}>
-          {isLast ? 'Keep & finish' : 'Keep & next'}
-        </button>
-      </div>
-    </div>
-  );
 }
 
 function DebugOverlay({ info, aspect, mirrored }) {
@@ -998,8 +1154,4 @@ function DebugPanel({ info, claude, visionState }) {
         .join('\n')}
     </pre>
   );
-}
-
-function formatTime(total) {
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }

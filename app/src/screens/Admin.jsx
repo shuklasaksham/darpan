@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Wordmark } from '../ui/Brand.jsx';
 
 async function api(path, options) {
   const res = await fetch(path, options);
@@ -48,7 +49,7 @@ export default function Admin() {
   if (data === null) {
     return (
       <main className="center">
-        <img src="/logo.svg" alt="" width="36" height="54" />
+        <Wordmark />
         <h2>Darpan admin</h2>
         <form className="card admin-login" onSubmit={signIn}>
           <label>
@@ -69,8 +70,8 @@ export default function Admin() {
     <div className="admin">
       <header className="admin-top">
         <div className="brand">
-          <img src="/logo.svg" alt="" width="20" height="30" />
-          <span>Darpan admin</span>
+          <Wordmark />
+          <span className="muted" style={{ marginLeft: 10 }}>admin</span>
         </div>
         <div className="row">
           <button onClick={load}>Refresh</button>

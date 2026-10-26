@@ -53,10 +53,18 @@ export async function sweepOldFiles(maxAgeMs = 24 * 60 * 60 * 1000) {
 
 // --- Planning --------------------------------------------------------------
 
-/** Where to cut a take: from just before the first word to just after the last. */
+/**
+ * Where to cut a take: where the creator trimmed it, or else from just before
+ * the first word to just after the last.
+ */
 export function trimFor(take) {
   const words = take.words ?? [];
   const duration = take.duration_seconds ?? 0;
+  if (take.trim_start != null && take.trim_end != null) {
+    const start = Math.max(0, take.trim_start);
+    const end = Math.min(duration || Infinity, take.trim_end);
+    if (end - start >= 0.5) return { start, end };
+  }
   if (!words.length) return { start: 0, end: duration };
   const start = Math.max(0, words[0].start - LEAD_IN);
   const end = Math.min(duration || Infinity, words[words.length - 1].end + TAIL);
@@ -84,13 +92,16 @@ export function reelSize(takes, maxLongEdge = MAX_LONG_EDGE) {
 
 /**
  * Caption lines for one take: filler words dropped, Devanagari turned into
- * Roman Hinglish, grouped into short chunks timed to the speech.
+ * Roman Hinglish, grouped into short chunks timed to the speech. `edits` holds
+ * the creator's fixes by word index; an empty string drops the word, and an
+ * edited filler is kept.
  */
-export function captionChunks(words, hinglish, trim) {
+export function captionChunks(words, hinglish, trim, edits = null) {
   const skip = new Set(findFillers(words).flatMap((f) => f.indices));
+  const edited = (i) => edits && Object.hasOwn(edits, i);
   const kept = words
-    .map((w, i) => ({ ...w, caption: (hinglish?.[i] ?? toHinglish(w.text)).trim() }))
-    .filter((w, i) => !skip.has(i) && w.caption && w.end > trim.start && w.start < trim.end);
+    .map((w, i) => ({ ...w, caption: (edited(i) ? String(edits[i]) : (hinglish?.[i] ?? toHinglish(w.text))).trim() }))
+    .filter((w, i) => (edited(i) || !skip.has(i)) && w.caption && w.end > trim.start && w.start < trim.end);
 
   const chunks = [];
   let current = [];
@@ -264,7 +275,7 @@ async function buildReel(reel, job) {
       const trim = trims[i];
       const duration = trim.end - trim.start;
       job.stage = `Editing shot ${i + 1} of ${takes.length}`;
-      const chunks = reel.captions ? captionChunks(take.words ?? [], hinglish[i], trim) : [];
+      const chunks = reel.captions ? captionChunks(take.words ?? [], hinglish[i], trim, take.caption_edits) : [];
       const assPath = path.join(dir, `piece-${i}.ass`);
       await fs.promises.writeFile(assPath, assFile({ ...size, duration, chunks, tag: reel.tag !== false }));
       const out = path.join(dir, `piece-${i}.mp4`);
