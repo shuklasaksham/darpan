@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { checkFrame, keepTake, posterUrl, uploadTake } from '../api.js';
+import { checkFrame, keepTake, posterUrl, uploadTake, uploadTakeFile, uploadsPending, waitForUploads } from '../api.js';
 import Reel from './Reel.jsx';
 import TakeReview from './TakeReview.jsx';
 import { pickMimeType, stopStream } from '../media.js';
@@ -21,7 +21,10 @@ const TICK_MS = 200;
 const TICK_RECORDING_MS = 400;
 const DETECT_EDGE = 360; // long edge of the frame the models see
 const LIGHT_EDGE = 240;
-const RECORD_EDGE = 1280;
+// Takes are recorded straight from the camera at its own resolution (typically
+// 1080x1920); this bitrate keeps that detail without bloating the upload.
+const VIDEO_BPS = 10_000_000;
+const AUDIO_TYPES = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg;codecs=opus'];
 
 /** Centre crop of the camera image to the chosen aspect ratio, in source pixels. */
 function cropRect(vw, vh, aspect) {
@@ -42,14 +45,14 @@ const everyShotKept = (plan, kept) => {
   return n > 0 && Array.from({ length: n }, (_, i) => kept?.[i]?.takeId).every(Boolean);
 };
 
-export default function Camera({ shoot, planned: initialPlan, initialKept, health, onClose }) {
+export default function Camera({ shoot, planned: initialPlan, initialKept, health, onClose: close }) {
   const debug = useMemo(() => new URLSearchParams(window.location.search).has('debug'), []);
   const language = shoot.language;
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const recorderRef = useRef(null);
-  const recordRafRef = useRef(0);
+  const audioRecorderRef = useRef(null);
   const startedAtRef = useRef(0);
   const closedRef = useRef(false);
   const statsRef = useRef(null); // loudness, gaze and frames gathered during a take
@@ -73,6 +76,15 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   // Resuming a shoot whose shots are all kept goes straight to the reel.
   const [reelOpen, setReelOpen] = useState(() => everyShotKept(initialPlan, initialKept));
   const [lostNotice, setLostNotice] = useState(0); // takes lost on the server, to re-record
+  const [saving, setSaving] = useState(false);
+  // Leaving waits for videos still uploading in the background, or they'd be lost.
+  const onClose = async () => {
+    if (uploadsPending()) {
+      setSaving(true);
+      await waitForUploads();
+    }
+    close();
+  };
   const keptRef = useRef(kept);
   keptRef.current = kept;
   // Kept takes live in memory as blobs until the camera closes.
@@ -161,7 +173,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
     }
     navigator.mediaDevices
       .getUserMedia({
-        video: { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 }, resizeMode: 'none' },
+        video: { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 }, resizeMode: 'none' },
         audio: true,
       })
       .then((stream) => {
@@ -181,7 +193,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
     return () => {
       cancelled = true;
       if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
-      cancelAnimationFrame(recordRafRef.current);
+      if (audioRecorderRef.current?.state === 'recording') audioRecorderRef.current.stop();
       stopStream(streamRef.current);
       streamRef.current = null;
       if (videoRef.current) videoRef.current.srcObject = null;
@@ -498,42 +510,52 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
 
   function startRecording() {
     const stream = streamRef.current;
-    const v = videoRef.current;
-    if (!stream || !v?.videoWidth) return;
+    if (!stream || !videoRef.current?.videoWidth) return;
     speakerRef.current?.stop();
 
-    // Record through a canvas so the file has the chosen aspect ratio (and
-    // isn't mirrored, unlike the preview).
-    const crop = cropRect(v.videoWidth, v.videoHeight, aspect);
-    const edge = Math.min(RECORD_EDGE, Math.max(crop.w, crop.h));
-    const [w, h] = sizeFor(aspect, edge);
-    const canvas = document.createElement('canvas');
-    canvas.width = w - (w % 2);
-    canvas.height = h - (h % 2);
-    const ctx = canvas.getContext('2d');
-    const draw = () => {
-      ctx.drawImage(v, crop.x, crop.y, crop.w, crop.h, 0, 0, canvas.width, canvas.height);
-      recordRafRef.current = requestAnimationFrame(draw);
-    };
-    draw();
-
-    const mixed = new MediaStream([...canvas.captureStream(30).getVideoTracks(), ...stream.getAudioTracks()]);
+    // Record the camera itself, at its full resolution and frame rate: no canvas
+    // in between, so the take keeps the phone's quality (the preview's mirroring
+    // is CSS only). The chosen aspect ratio is cropped on the server, from the
+    // centre, exactly as the preview shows it.
     const mimeType = pickMimeType(VIDEO_TYPES);
-    const recorder = new MediaRecorder(mixed, { ...(mimeType && { mimeType }), videoBitsPerSecond: 5_000_000 });
+    const recorder = new MediaRecorder(stream, {
+      ...(mimeType && { mimeType }),
+      videoBitsPerSecond: VIDEO_BPS,
+      audioBitsPerSecond: 128_000,
+    });
+    // A second, audio-only recording of a few hundred KB: the take is scored from
+    // it while the much larger video uploads in the background.
+    let audioRecorder = null;
+    const audioType = stream.getAudioTracks().length ? pickMimeType(AUDIO_TYPES) : null;
+    if (audioType) {
+      try {
+        audioRecorder = new MediaRecorder(new MediaStream(stream.getAudioTracks()), { mimeType: audioType, audioBitsPerSecond: 64_000 });
+      } catch {
+        audioRecorder = null;
+      }
+    }
     const chunks = [];
+    const audioChunks = [];
     recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-    recorder.onstop = () => {
-      cancelAnimationFrame(recordRafRef.current);
-      mixed.getVideoTracks().forEach((t) => t.stop());
-      const durationSeconds = (Date.now() - startedAtRef.current) / 1000;
+    if (audioRecorder) audioRecorder.ondataavailable = (e) => e.data.size && audioChunks.push(e.data);
+    const recordAspect = aspect;
+    let waiting = audioRecorder ? 2 : 1;
+    let durationSeconds = 0;
+    const finished = () => {
+      durationSeconds ||= (Date.now() - startedAtRef.current) / 1000;
+      if (--waiting > 0) return;
       clearInterval(loudTimerRef.current);
       levelRef.current = null;
       const stats = statsRef.current;
       statsRef.current = null;
       const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'video/webm' });
-      if (blob.size && !closedRef.current) send(blob, durationSeconds, stats);
+      const audioBlob = audioChunks.length ? new Blob(audioChunks, { type: audioRecorder.mimeType || audioType }) : null;
+      if (blob.size && !closedRef.current) send(blob, durationSeconds, stats, audioBlob, recordAspect);
     };
+    recorder.onstop = finished;
+    if (audioRecorder) audioRecorder.onstop = finished;
     recorderRef.current = recorder;
+    audioRecorderRef.current = audioRecorder;
     startedAtRef.current = Date.now();
     statsRef.current = { startedAt: startedAtRef.current, loudness: [], gaze: [], frames: [], lastFrameAt: 0 };
     // Loudness 10 times a second, to see how much the voice rises and falls
@@ -551,28 +573,38 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
     setTake(null);
     setShowAspects(false);
     recorder.start(1000);
+    audioRecorder?.start(1000);
     setRecording(true);
   }
 
   function stopRecording() {
     recorderRef.current?.stop();
+    if (audioRecorderRef.current?.state === 'recording') audioRecorderRef.current.stop();
     setRecording(false);
   }
 
   const lastSend = useRef(null);
-  async function send(blob, durationSeconds, stats) {
+  async function send(blob, durationSeconds, stats, audioBlob = null, recordAspect = aspect) {
     const url = URL.createObjectURL(blob);
-    const args = { blob, durationSeconds, stats, url, shotIndex };
+    const args = { blob, audioBlob, durationSeconds, stats, url, shotIndex, aspect: recordAspect };
     lastSend.current = args;
     await upload(args);
   }
 
-  async function upload({ blob, durationSeconds, stats, url, shotIndex: forShot }) {
-    setTake({ status: 'uploading', url, blob, progress: 0 });
+  /**
+   * Scores the take from its audio when there is one (fast), then sends the video
+   * in the background while the creator reads the notes. A picked file, or a
+   * phone that can't record audio separately, sends the video up front.
+   */
+  async function upload({ blob, audioBlob, durationSeconds, stats, url, shotIndex: forShot, aspect: recordAspect }) {
+    const sent = audioBlob ?? blob;
+    setTake({ status: 'uploading', url, blob, sentBytes: sent.size, progress: 0 });
     try {
       const result = await uploadTake(
-        blob,
+        audioBlob ? null : blob,
         {
+          audio: audioBlob,
+          aspect: recordAspect,
           planId: planned?.planId,
           plan: planned?.planId ? undefined : planned?.script,
           shotIndex: shots[forShot] ? forShot : undefined,
@@ -584,9 +616,10 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
         },
         (progress) => setTake((t) => (t?.url === url ? { ...t, progress } : t)),
       );
+      if (audioBlob && result.id) uploadTakeFile(result.id, blob).catch(() => {}); // the reel re-sends it from this phone if needed
       if (closedRef.current) return;
       // The creator chooses to read the notes or hear them (TakeReview), never both at once.
-      setTake({ status: 'done', url, blob, result, progress: 1 });
+      setTake({ status: 'done', url, blob, sentBytes: sent.size, result, progress: 1 });
     } catch (err) {
       if (closedRef.current) return;
       setTake({ status: err.offline ? 'offline' : 'error', url, blob, error: err.message });
@@ -790,7 +823,11 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
                   onClick={() => allKept && setReelOpen(true)}
                   aria-label={allKept ? 'Open your reel' : `${Object.keys(kept).length} of ${shots.length} shots kept`}
                 >
-                  <img src={posterUrl(lastKept.takeId)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  {lastKept.blob ? (
+                    <video src={`${lastKept.url}#t=0.3`} muted playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    <img src={posterUrl(lastKept.takeId)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  )}
                   <b>
                     {Object.keys(kept).length}/{shots.length}
                   </b>
@@ -858,6 +895,18 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
             setLostNotice(lost.length);
           }}
         />
+      )}
+
+      {saving && (
+        <div className="sheet-backdrop" role="alertdialog" aria-live="polite">
+          <div className="sheet studio">
+            <div className="row">
+              <div className="loader" aria-hidden="true" />
+              <p>Saving your takes…</p>
+            </div>
+            <p className="small muted">Your videos are still uploading. Keep this screen open for a moment.</p>
+          </div>
+        </div>
       )}
 
       {debug && debugInfo && <DebugPanel info={debugInfo} claude={claude} visionState={visionState} />}

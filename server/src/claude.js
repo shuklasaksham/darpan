@@ -271,12 +271,12 @@ export async function writeScript({ creator, idea, format, language }) {
   const lang = SCRIPT_RULES[language] ? language : 'Hinglish';
 
   try {
-    // Don't make the creator wait on trend research: use it if it's ready within a
-    // few seconds (usually cached from the home screen's trend cards), otherwise
+    // Don't make the creator wait on trend research: use it if it's ready within
+    // 2.5 seconds (usually cached from the home screen's trend cards), otherwise
     // write without it while the research finishes in the background.
     const trends = await Promise.race([
       researchTrends(creator.niche, lang),
-      new Promise((resolve) => setTimeout(() => resolve(''), 6000)),
+      new Promise((resolve) => setTimeout(() => resolve(''), 2500)),
     ]);
     const brief = [
       `Creator's niche: ${creator.niche}`,
