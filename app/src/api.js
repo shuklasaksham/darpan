@@ -28,7 +28,6 @@ export const signUp = (details) => postJson('/api/auth/signup', details);
 export const logIn = (username, pin) => postJson('/api/auth/login', { username, pin });
 export const logOut = () => postJson('/api/auth/logout', {});
 
-export const getIdeas = (language) => request(`/api/director/ideas?language=${encodeURIComponent(language)}`);
 export const getTrends = (language) => request(`/api/trends?language=${encodeURIComponent(language)}`);
 export const writeScript = (brief) => postJson('/api/script', brief);
 export const saveScript = (planId, script) =>
@@ -36,7 +35,6 @@ export const saveScript = (planId, script) =>
 export const getBilling = () => request('/api/billing');
 export const startCheckout = () => postJson('/api/billing/checkout', {});
 export const verifyRazorpay = (body) => postJson('/api/billing/razorpay/verify', body);
-export const reviewPlan = (planId) => postJson(`/api/plans/${planId}/review`, {});
 export const getRecent = () => request('/api/recent');
 export const checkFrame = (body) => postJson('/api/frame-check', body);
 export const keepTake = (id) => postJson(`/api/takes/${id}/keep`, {});

@@ -4,7 +4,6 @@ import { config } from './config.js';
 import { pool } from './db.js';
 import { limit } from './limits.js';
 import { claudeConfigured } from './claude.js';
-import { directorConfigured } from './director.js';
 import { ttsConfigured } from './tts.js';
 import { paymentProvider, paymentsConfigured, reconcilePro } from './billing.js';
 
@@ -115,7 +114,6 @@ adminRouter.get('/api/admin/stats', async (req, res, next) => {
       services: {
         database: true,
         claude: claudeConfigured,
-        agenticorg: directorConfigured,
         deepgram: Boolean(config.deepgramApiKey),
         sarvam: ttsConfigured,
         payments: paymentsConfigured,

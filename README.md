@@ -30,9 +30,6 @@ needs HTTPS outside localhost, so test recording on the deployed site.
 | `DEEPGRAM_API_KEY` | Deepgram: spoken ideas and take transcripts |
 | `SARVAM_API_KEY` | Sarvam Bulbul voice for spoken tips and notes |
 | `SARVAM_SPEAKER` | Optional Bulbul v3 voice (default `priya`) |
-| `AGENTICORG_API_KEY` | Optional AgenticOrg key (`ao_sk_...`) for idea suggestions |
-| `AGENTICORG_DIRECTOR_AGENT_ID` | Optional UUID of the AgenticOrg ideas agent |
-| `AGENTICORG_BASE_URL` | Optional; defaults to `https://app.agenticorg.ai` |
 | `UPLOAD_DIR` | Optional; where uploads are written (default: OS temp dir) |
 | `MAX_UPLOAD_MB` | Optional; upload size cap (default 200) |
 
@@ -140,19 +137,6 @@ next" goes straight to the next shot.
 
 Deepgram documents `filler_words=true` for English; Hindi fillers like "matlab"
 are ordinary words, so they're transcribed either way.
-
-## Idea suggestions (AgenticOrg, optional)
-
-The "Ideas for your niche" list on the home screen comes from an agent in your
-[AgenticOrg](https://agenticorg.ai) workspace, run by ID with the action
-`suggest_ideas` and expected to return `{ ideas: [{ title, format, why }] }`. Set
-`AGENTICORG_API_KEY` and `AGENTICORG_DIRECTOR_AGENT_ID` to turn it on; without
-them the list is hidden. Suggested brief for the agent:
-
-> You suggest reel ideas for Darpan, an app for first-time Indian creators
-> shooting vertical reels on a phone. Reply only with JSON in the shape given in
-> `context.output_format`. Suggest ideas that fit `creator_niche`, in the
-> requested language.
 
 ## Uploads
 

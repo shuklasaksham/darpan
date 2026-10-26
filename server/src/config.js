@@ -45,9 +45,6 @@ export const config = {
   // Amount in paise (Rs 299 = 29900); confirm the unit with Pine Labs.
   proPricePaise: Number(process.env.PRO_PRICE_PAISE || 29900),
   publicUrl: (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, ''),
-  agenticorgApiKey: process.env.AGENTICORG_API_KEY,
-  agenticorgDirectorAgentId: process.env.AGENTICORG_DIRECTOR_AGENT_ID,
-  agenticorgBaseUrl: process.env.AGENTICORG_BASE_URL || 'https://app.agenticorg.ai',
   // Uploads are streamed to disk, never buffered in memory (the server has 512 MB).
   // Takes must survive redeploys: use a Render Disk mounted at /var/data when
   // there is one; the container's temp folder is wiped on every deploy.

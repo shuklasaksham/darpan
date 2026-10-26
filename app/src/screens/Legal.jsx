@@ -29,7 +29,7 @@ const PAGES = {
     body: [
       ['What we collect', 'Your name, username, gender (optional choice) and content niche; a hashed PIN; the ideas, scripts, videos and audio you record; and payment records (amount and status, never your card or UPI details, which Razorpay handles).'],
       ['How we use it', 'To provide Darpan: writing scripts, coaching you while you film, transcribing and reviewing takes, making reels, and managing your plan. We do not sell your data or use it for advertising.'],
-      ['Service providers', 'To do this, some data is processed by: Anthropic (Claude: scripts and feedback), Deepgram (speech-to-text), Sarvam AI (spoken tips), AgenticOrg (script review), Razorpay (payments) and Render (hosting). Each processes it only to provide their service to us.'],
+      ['Service providers', 'To do this, some data is processed by: Anthropic (Claude: scripts and feedback), Deepgram (speech-to-text), Sarvam AI (spoken tips), Razorpay (payments) and Render (hosting). Each processes it only to provide their service to us.'],
       ['Camera and microphone', 'Darpan uses your camera and microphone only while you are on the camera screen. Face and framing checks run on your phone; single frames are sent for feedback only when you are about to record.'],
       ['Retention', 'Recordings are deleted within 24 hours. Account details, scripts and take scores are kept while your account is active. Email us to delete your account and its data.'],
       ['Security', 'Data is sent over HTTPS, PINs are stored hashed, and access is limited to what is needed to run the service.'],

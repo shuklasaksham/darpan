@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { getIdeas, getTrends, transcribe } from '../api.js';
+import { getTrends, transcribe } from '../api.js';
 import { pickMimeType, stopStream } from '../media.js';
 import { PlanCard } from './Plan.jsx';
 import { RecentShoots } from './Recent.jsx';
@@ -30,8 +30,8 @@ export default function Home({ user, health, onShoot, onResume, onLogOut }) {
   const [language, setLanguage] = useState(savedLanguage);
   const [cards, setCards] = useState(null); // null while loading
   const firstName = user.name.split(/\s+/)[0];
-  // Trend cards come from Claude; the AgenticOrg agent's ideas are the fallback.
-  const cardSource = health?.scripts ? 'claude' : health?.director ? 'agenticorg' : null;
+  // Trend cards come from Claude.
+  const trendsOn = Boolean(health?.scripts);
 
   useEffect(() => {
     try {
@@ -40,18 +40,16 @@ export default function Home({ user, health, onShoot, onResume, onLogOut }) {
   }, [language]);
 
   useEffect(() => {
-    if (!cardSource) return;
+    if (!trendsOn) return;
     let alive = true;
     setCards(null);
-    const load =
-      cardSource === 'claude'
-        ? getTrends(language).then(({ cards }) => cards)
-        : getIdeas(language).then(({ ideas }) => ideas);
-    load.then((list) => alive && setCards(list ?? [])).catch(() => alive && setCards([]));
+    getTrends(language)
+      .then(({ cards: list }) => alive && setCards(list ?? []))
+      .catch(() => alive && setCards([]));
     return () => {
       alive = false;
     };
-  }, [cardSource, language]);
+  }, [trendsOn, language]);
 
   // Whatever is in the box is the idea, word for word.
   const typedIdea = idea.trim();
@@ -100,7 +98,7 @@ export default function Home({ user, health, onShoot, onResume, onLogOut }) {
         </div>
       </form>
 
-      {cardSource && (cards === null || cards.length > 0) && (
+      {trendsOn && (cards === null || cards.length > 0) && (
         <section className="stack">
           <div className="section-title">
             <h3>Trending in your niche</h3>

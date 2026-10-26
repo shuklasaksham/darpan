@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { reviewPlan, saveScript, writeScript } from '../api.js';
+import { saveScript, writeScript } from '../api.js';
 import { FRAMINGS } from '../camera/framing.js';
 
 // Start downloading and starting the camera's face detection (and the camera
@@ -44,7 +44,6 @@ export default function Script({ shoot, health, onStart, onBack }) {
   const [script, setScript] = useState(null);
   const [saving, setSaving] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const [director, setDirector] = useState(null); // null while reviewing, [] when none
 
   useEffect(warmUpCamera, []);
 
@@ -62,15 +61,6 @@ export default function Script({ shoot, health, onStart, onBack }) {
         setPlanId(r.planId);
         setScript(r.script);
         setState('ready');
-        // The AgenticOrg director's review arrives a few seconds later.
-        setDirector(null);
-        if (r.planId) {
-          reviewPlan(r.planId)
-            .then(({ notes }) => alive && setDirector(notes ?? []))
-            .catch(() => alive && setDirector([]));
-        } else {
-          setDirector([]);
-        }
       })
       .catch((err) => {
         if (!alive) return;
@@ -146,20 +136,6 @@ export default function Script({ shoot, health, onStart, onBack }) {
       />
       {script.trend_used && <p className="tag-line">Trend: {script.trend_used}</p>}
       <p className="muted">Edit anything you like. Your lines show on the teleprompter.</p>
-
-      {director === null && planId && (
-        <section className="director-notes">
-          <p className="pulse">Your director is reviewing the script…</p>
-        </section>
-      )}
-      {director?.length > 0 && (
-        <section className="director-notes">
-          <h3>Your director suggests</h3>
-          <ul>
-            {director.map((n, i) => <li key={i}>{n}</li>)}
-          </ul>
-        </section>
-      )}
 
       <details className="card full-script" open>
         <summary>

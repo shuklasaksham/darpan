@@ -11,7 +11,6 @@ import { analyzeTake, ruleNotes } from './analyze.js';
 import { enqueueReel, jobStatus, sweepOldFiles, takesDir } from './reels.js';
 import { authRouter, loadUser, requireUser } from './auth.js';
 import { transcribeFile, transcribeWithWords, TranscribeError } from './transcribe.js';
-import { directorConfigured, DirectorError, reviewScript, suggestIdeas } from './director.js';
 import { checkFrame, ClaudeError, claudeConfigured, directorNotes, trendCards, writeScript } from './claude.js';
 import { speak, TtsError, ttsConfigured } from './tts.js';
 import { limits } from './limits.js';
@@ -85,7 +84,6 @@ app.get('/api/health', async (_req, res) => {
     ffmpeg: await ffmpegAvailable(),
     // 'persistent' when takes live on the Render Disk and survive redeploys.
     storage: config.uploadDir.startsWith('/var/data') ? 'persistent' : 'temporary',
-    director: directorConfigured,
     scripts: claudeConfigured,
     voice: Boolean(config.deepgramApiKey),
     tts: ttsConfigured,
@@ -93,7 +91,6 @@ app.get('/api/health', async (_req, res) => {
       anthropic: Boolean(config.anthropicApiKey),
       deepgram: Boolean(config.deepgramApiKey),
       sarvam: Boolean(config.sarvamApiKey),
-      agenticorg: Boolean(config.agenticorgApiKey),
     },
   });
 });
@@ -123,15 +120,6 @@ async function loadPlan(planId, userId) {
   return rows[0]?.plan ?? null;
 }
 
-app.get('/api/director/ideas', requireUser, async (req, res, next) => {
-  try {
-    const { ideas } = await suggestIdeas({ creator: req.user, language: req.query.language });
-    res.json({ ideas: Array.isArray(ideas) ? ideas : [] });
-  } catch (err) {
-    next(err);
-  }
-});
-
 app.get('/api/trends', requireUser, limits.trends, async (req, res, next) => {
   try {
     res.json({ cards: await trendCards({ niche: req.user.niche, language: req.query.language }) });
@@ -152,7 +140,6 @@ app.post('/api/script', requireUser, limits.script, async (req, res, next) => {
       language,
     };
     const { script, messageId } = await writeScript({ creator: req.user, ...brief });
-    // The AgenticOrg director reviews every script; its notes show before shooting.
     let planId = null;
     if (pool) {
       const { rows } = await pool.query(
@@ -170,23 +157,6 @@ app.post('/api/script', requireUser, limits.script, async (req, res, next) => {
 // One Claude look at a frame per user every few seconds at most.
 const FRAME_CHECK_GAP_MS = 4000;
 const lastFrameCheck = new Map();
-
-// Save the creator's edits to a script before shooting.
-// The AgenticOrg director reviews a script; asked separately so the script shows at once.
-app.post('/api/plans/:id/review', requireUser, limits.script, async (req, res, next) => {
-  if (!directorConfigured) return res.json({ notes: [] });
-  try {
-    const plan = await loadPlan(req.params.id, req.user.id);
-    if (!plan) return res.status(404).json({ error: 'Script not found' });
-    const notes = await reviewScript({ creator: req.user, script: plan, language: plan.language }).catch((err) => {
-      console.error('AgenticOrg script review failed:', err.message);
-      return [];
-    });
-    res.json({ notes });
-  } catch (err) {
-    next(err);
-  }
-});
 
 // Recent shoots with their kept takes, so a creator can pick up where they left off.
 app.get('/api/recent', requireUser, async (req, res, next) => {
@@ -221,6 +191,7 @@ app.get('/api/recent', requireUser, async (req, res, next) => {
   }
 });
 
+// Save the creator's edits to a script before shooting.
 app.put('/api/plans/:id', requireUser, async (req, res, next) => {
   const shots = req.body?.script?.shots;
   if (!pool) return res.status(503).json({ error: 'Saving scripts needs a database' });
@@ -601,7 +572,7 @@ app.use((err, _req, res, _next) => {
     const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
     return res.status(status).json({ error: err.message });
   }
-  if ([DirectorError, TranscribeError, ClaudeError, TtsError, BillingError].some((type) => err instanceof type)) {
+  if ([TranscribeError, ClaudeError, TtsError, BillingError].some((type) => err instanceof type)) {
     return res.status(err.status).json({ error: err.message });
   }
   console.error(err);
@@ -610,7 +581,6 @@ app.use((err, _req, res, _next) => {
 
 await migrate();
 await reconcilePro().catch((err) => console.error('Pro reconcile failed:', err.message));
-if (!directorConfigured) console.warn("AgenticOrg director is not configured: set AGENTICORG_API_KEY and AGENTICORG_DIRECTOR_AGENT_ID");
 sweepOldFiles().catch(() => {});
 startPaymentSweeper();
 setInterval(() => sweepOldFiles().catch(() => {}), 60 * 60 * 1000).unref();

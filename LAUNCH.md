@@ -8,7 +8,6 @@ What's needed to put Darpan in real users' hands.
   Used for scripts, trend cards, frame checks, director's notes and captions.
 - **Deepgram** API key (spoken ideas and take transcripts).
 - **Sarvam AI** API key (Bulbul voice for tips and notes).
-- **AgenticOrg** (required): API key and the director agent's ID. The director reviews every script and suggests ideas.
 - Set spending limits/alerts in each dashboard.
 
 ## Payments (Razorpay)

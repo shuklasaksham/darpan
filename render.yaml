@@ -37,12 +37,6 @@ services:
       # uat for testing, production when live
       - key: PINELABS_ENV
         value: uat
-      - key: AGENTICORG_BASE_URL
-        value: https://agenticorg.hackathon.pinelabs.com
-      - key: AGENTICORG_API_KEY
-        sync: false
-      - key: AGENTICORG_DIRECTOR_AGENT_ID
-        sync: false
 
 databases:
   - name: darpan-db
