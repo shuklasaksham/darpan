@@ -1,18 +1,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { config } from './config.js';
 import { pool } from './db.js';
 import { findFillers } from './analyze.js';
 import { transliterateWord } from './usernames.js';
-import { claudeConfigured, hinglishCaptions } from './claude.js';
 
 // Builds a reel from kept takes:
-//   1. each take is trimmed to its speech, scaled to the reel size, and has its
-//      captions and the "Shot with Darpan" tag burned in (one encode per take,
-//      all with identical settings), then
+//   1. each take becomes a "piece": trimmed to its speech, cropped and scaled to
+//      the reel size, captions and the "Shot with Darpan" tag burned in (one
+//      encode per take, all with identical settings), then
 //   2. the pieces are joined with ffmpeg's concat demuxer without re-encoding.
-// Jobs run one at a time: the server has 512 MB and ffmpeg needs most of it.
+// Pieces are cached next to the take and made in the background as soon as a
+// take is kept or edited, so "Make my reel" usually only has to join them.
+// ffmpeg runs one job at a time by default (the server has little memory); the
+// creator's own reel always goes ahead of background work.
 
 export const takesDir = path.join(config.uploadDir, 'takes');
 export const reelsDir = path.join(config.uploadDir, 'reels');
@@ -21,22 +24,68 @@ fs.mkdirSync(reelsDir, { recursive: true });
 
 const FONT_DIR = '/usr/share/fonts/truetype/dejavu';
 const FONT = 'DejaVu Sans';
-const MAX_LONG_EDGE = 1920; // Reels top out at 1080×1920
 const LEAD_IN = 0.15; // seconds kept before the first word
 const TAIL = 0.4; // and after the last, so nothing sounds clipped
 const FPS = 30;
+const PIECE_VERSION = 2; // bump when the encode settings change, so old pieces aren't reused
+
+// x264 "veryfast" at CRF 21 looks close to the phone's own recording; the
+// maxrate keeps files small enough to download quickly on mobile data.
+const PRESET = process.env.REEL_PRESET || 'veryfast';
+const THREADS = String(Math.max(1, Number(process.env.FFMPEG_THREADS) || 1));
+const CONCURRENCY = Math.max(1, Number(process.env.REEL_CONCURRENCY) || 1);
+
+// --- Work queue --------------------------------------------------------------
+
+const lanes = { high: [], low: [] };
+let running = 0;
+
+/** Runs `fn` when a slot is free; 'high' work (a creator waiting) goes first. */
+function schedule(fn, priority = 'low') {
+  const task = { fn, priority };
+  task.promise = new Promise((resolve, reject) => Object.assign(task, { resolve, reject }));
+  lanes[priority].push(task);
+  pump();
+  return task;
+}
+
+function pump() {
+  while (running < CONCURRENCY) {
+    const task = lanes.high.shift() ?? lanes.low.shift();
+    if (!task) return;
+    running++;
+    task.started = true;
+    task
+      .fn()
+      .then(task.resolve, task.reject)
+      .finally(() => {
+        running--;
+        pump();
+      });
+  }
+}
+
+/** Moves waiting background work to the front when a creator now needs it. */
+function promote(task) {
+  if (task.started || task.priority === 'high') return;
+  const i = lanes.low.indexOf(task);
+  if (i >= 0) lanes.low.splice(i, 1);
+  task.priority = 'high';
+  lanes.high.unshift(task);
+}
+
+// --- Reel jobs ---------------------------------------------------------------
 
 const jobs = new Map(); // reelId -> { status, progress, stage, error }
-let queue = Promise.resolve();
 
 export function jobStatus(reelId) {
   return jobs.get(String(reelId)) ?? null;
 }
 
 export function enqueueReel(reel) {
-  const job = { status: 'queued', progress: 0, stage: 'Waiting for the editing room' };
+  const job = { status: 'queued', progress: 0, stage: 'Getting your shots ready' };
   jobs.set(String(reel.id), job);
-  queue = queue.then(() => buildReel(reel, job)).catch(() => {});
+  buildReel(reel, job).catch(() => {});
   return job;
 }
 
@@ -71,23 +120,22 @@ export function trimFor(take) {
   return end - start > 0.5 ? { start, end } : { start: 0, end: duration };
 }
 
+/** The aspect ratio the creator shot a take in (the camera records the full frame). */
+export function takeAspect(take) {
+  if (take.aspect > 0) return take.aspect;
+  if (take.width && take.height) return take.width / take.height;
+  return 9 / 16;
+}
+
 /**
- * The reel uses the first take's aspect ratio, at the highest resolution any
- * take reaches at that ratio (cropping, never padding), capped so the long
- * edge is at most 1920 (Reels' 1080×1920). Smaller takes are scaled up to it.
- * Dimensions are even, as H.264 needs.
+ * The reel's frame for an aspect ratio, fixed per plan so pieces can be made
+ * ahead of time: 9:16 is 1080×1920 on Pro (720×1280 on Free), 4:5 1080×1350,
+ * 1:1 1080×1080, 16:9 1920×1080. Dimensions are even, as H.264 needs.
  */
-export function reelSize(takes, maxLongEdge = MAX_LONG_EDGE) {
-  const aspect = takes[0].width / takes[0].height;
-  // Widest frame at this ratio that fits inside each take.
-  const widest = Math.max(...takes.map((t) => Math.min(t.width, t.height * aspect)));
-  let width = widest;
-  let height = widest / aspect;
-  const scale = Math.min(1, maxLongEdge / Math.max(width, height));
-  width *= scale;
-  height *= scale;
+export function reelSize(aspect, maxLongEdge = 1920) {
+  const short = (maxLongEdge * 9) / 16;
   const even = (n) => Math.max(2, Math.round(n / 2) * 2);
-  return { width: even(width), height: even(height) };
+  return aspect < 1 ? { width: even(short), height: even(short / aspect) } : { width: even(short * aspect), height: even(short) };
 }
 
 /**
@@ -199,38 +247,114 @@ function ffmpeg(args, { duration, onProgress } = {}) {
 }
 
 const filterPath = (p) => p.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
+const exists = (p) => (p ? fs.promises.access(p).then(() => true, () => false) : Promise.resolve(false));
 
 async function encodePiece({ take, trim, size, assPath, out, onProgress }) {
   const duration = trim.end - trim.start;
   const { width, height } = size;
   const video = [
-    `scale=${width}:${height}:force_original_aspect_ratio=increase:flags=bicubic`,
+    // Crop from the centre to the reel's shape, as the camera preview showed it.
+    `scale=${width}:${height}:force_original_aspect_ratio=increase:flags=lanczos`,
     `crop=${width}:${height}`,
     'setsar=1',
     `fps=${FPS}`,
-    `subtitles=filename='${filterPath(assPath)}':fontsdir='${filterPath(FONT_DIR)}'`,
+    ...(assPath ? [`subtitles=filename='${filterPath(assPath)}':fontsdir='${filterPath(FONT_DIR)}'`] : []),
   ].join(',');
+  // About 6 Mbps for 1080p and 3.5 for 720p: Instagram's own targets.
+  const maxrate = width * height >= 1_500_000 ? 6000 : 3500;
 
   // Every piece gets identical stream settings so they can be joined without
   // re-encoding; a take without sound gets a silent track for the same reason.
-  // One thread for decoding, filters and x264: measured at about 180-215 MB for a
-  // 1080x1920 piece, against 500 MB+ with ffmpeg's default of a thread per core.
-  const args = ['-y', '-threads', '1', '-ss', trim.start.toFixed(3), '-t', duration.toFixed(3), '-i', take.file_path];
+  const args = ['-y', '-threads', THREADS, '-ss', trim.start.toFixed(3), '-t', duration.toFixed(3), '-i', take.file_path];
   if (!take.has_audio) args.push('-f', 'lavfi', '-t', duration.toFixed(3), '-i', 'anullsrc=r=48000:cl=stereo');
   args.push(
     '-map', '0:v:0',
     '-map', take.has_audio ? '0:a:0' : '1:a:0',
-    '-filter_threads', '1',
+    '-filter_threads', THREADS,
     '-vf', video,
-    // ultrafast: ~2.6x quicker than veryfast on Render's small CPUs, at a larger file size.
-    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-profile:v', 'high', '-pix_fmt', 'yuv420p',
-    '-r', String(FPS), '-g', String(FPS * 2), '-threads', '1', '-x264-params', 'rc-lookahead=10',
+    '-c:v', 'libx264', '-preset', PRESET, '-crf', '21', '-maxrate', `${maxrate}k`, '-bufsize', `${maxrate * 2}k`,
+    '-profile:v', 'high', '-pix_fmt', 'yuv420p',
+    '-r', String(FPS), '-g', String(FPS * 2), '-threads', THREADS, '-x264-params', 'rc-lookahead=10',
     '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2',
     '-video_track_timescale', '15360',
     '-movflags', '+faststart',
     out,
   );
   await ffmpeg(args, { duration, onProgress });
+}
+
+// --- Pieces ----------------------------------------------------------------
+
+const inflight = new Map(); // piece path -> { task, listeners }
+
+/** Everything that changes how a take's piece looks, and the cache file for it. */
+function pieceFor(take, { captions, tag, size }) {
+  const trim = trimFor(take);
+  const chunks = captions ? captionChunks(take.words ?? [], take.caption_words ?? null, trim, take.caption_edits) : [];
+  const key = createHash('sha1')
+    .update(JSON.stringify({ v: PIECE_VERSION, trim, chunks, tag, size, preset: PRESET }))
+    .digest('hex')
+    .slice(0, 16);
+  return { trim, chunks, out: path.join(takesDir, `${take.id}.piece-${key}.mp4`) };
+}
+
+/**
+ * The take's piece for these settings: from the cache, from a render already
+ * under way, or rendered now. Returns its path; `cached` when no work was needed.
+ */
+export async function ensurePiece(take, { captions = true, tag = true, size }, { priority = 'low', onProgress } = {}) {
+  if (!(await exists(take.file_path))) throw Object.assign(new Error('Take file missing'), { missing: Number(take.id) });
+  const { trim, chunks, out } = pieceFor(take, { captions, tag, size });
+  if (await exists(out)) return { out, trim, cached: true };
+
+  let entry = inflight.get(out);
+  if (!entry) {
+    entry = { listeners: new Set() };
+    entry.task = schedule(async () => {
+      const tmp = `${out}.part.mp4`;
+      const assPath = chunks.length || tag ? `${out}.ass` : null;
+      try {
+        if (assPath) await fs.promises.writeFile(assPath, assFile({ ...size, duration: trim.end - trim.start, chunks, tag }));
+        await encodePiece({ take, trim, size, assPath, out: tmp, onProgress: (p) => entry.listeners.forEach((fn) => fn(p)) });
+        await fs.promises.rename(tmp, out);
+        // Older pieces of this take (before an edit) won't be used again.
+        const prefix = `${take.id}.piece-`;
+        for (const name of await fs.promises.readdir(takesDir).catch(() => [])) {
+          const file = path.join(takesDir, name);
+          if (name.startsWith(prefix) && file !== out && !inflight.has(file.replace(/\.part\.mp4$|\.ass$/, ''))) {
+            await fs.promises.rm(file, { force: true });
+          }
+        }
+      } finally {
+        await fs.promises.rm(tmp, { force: true }).catch(() => {});
+        if (assPath) await fs.promises.rm(assPath, { force: true }).catch(() => {});
+        inflight.delete(out);
+      }
+    }, priority);
+    inflight.set(out, entry);
+  } else if (priority === 'high') {
+    promote(entry.task);
+  }
+  if (onProgress) entry.listeners.add(onProgress);
+  try {
+    await entry.task.promise;
+  } finally {
+    if (onProgress) entry.listeners.delete(onProgress);
+  }
+  return { out, trim, cached: false };
+}
+
+/**
+ * Starts making a kept take's piece in the background, with the settings its
+ * reel will most likely use (captions on, the creator's plan), so the reel is
+ * ready to join by the time the last shot is kept.
+ */
+export function warmPiece(take, plan) {
+  if (!take?.file_path) return;
+  const size = reelSize(takeAspect(take), plan.maxLongEdge);
+  ensurePiece(take, { captions: true, tag: plan.tag !== false, size }).catch((err) => {
+    if (!err.missing) console.error(`Pre-render of take ${take.id} failed:`, err.message);
+  });
 }
 
 // --- The job ---------------------------------------------------------------
@@ -248,56 +372,45 @@ async function buildReel(reel, job) {
   try {
     await fs.promises.mkdir(dir, { recursive: true });
     job.status = 'working';
-    job.stage = 'Getting your takes ready';
     const takes = reel.takes;
-    const trims = takes.map(trimFor);
-    const size = reelSize(takes, reel.maxLongEdge);
-    const total = trims.reduce((n, t) => n + (t.end - t.start), 0);
+    // One frame for the whole reel: the first shot's aspect ratio at the plan's size.
+    const size = reelSize(takeAspect(takes[0]), reel.maxLongEdge);
+    const settings = { captions: reel.captions, tag: reel.tag !== false, size };
+    const lengths = takes.map((t) => {
+      const trim = trimFor(t);
+      return trim.end - trim.start;
+    });
+    const total = lengths.reduce((a, b) => a + b, 0) || 1;
+    const done = takes.map(() => 0);
+    const report = () => (job.progress = Math.min(0.95, (done.reduce((a, b) => a + b, 0) / total) * 0.95));
 
-    // Hinglish spellings for every word, from Claude when available.
-    let hinglish = takes.map(() => null);
-    if (reel.captions && claudeConfigured) {
-      job.stage = 'Writing your captions';
-      try {
-        // Don't let caption spelling hold up the render: local transliteration after 8 s.
-        hinglish = await Promise.race([
-          hinglishCaptions(takes.map((t) => (t.words ?? []).map((w) => w.text))),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), 8000)),
-        ]);
-      } catch (err) {
-        console.error('Hinglish captions from Claude failed, transliterating:', err.message);
-      }
-    }
-
-    const pieces = [];
-    let done = 0;
-    for (const [i, take] of takes.entries()) {
-      const trim = trims[i];
-      const duration = trim.end - trim.start;
-      job.stage = `Editing shot ${i + 1} of ${takes.length}`;
-      const chunks = reel.captions ? captionChunks(take.words ?? [], hinglish[i], trim, take.caption_edits) : [];
-      const assPath = path.join(dir, `piece-${i}.ass`);
-      await fs.promises.writeFile(assPath, assFile({ ...size, duration, chunks, tag: reel.tag !== false }));
-      const out = path.join(dir, `piece-${i}.mp4`);
-      await encodePiece({
-        take,
-        trim,
-        size,
-        assPath,
-        out,
-        onProgress: (p) => (job.progress = Math.min(0.95, ((done + p * duration) / total) * 0.95)),
-      });
-      done += duration;
-      pieces.push(out);
-    }
+    // Ask for every piece at once (cached ones return straight away), then wait in order.
+    job.stage = 'Editing your shots';
+    const pieces = takes.map((take, i) =>
+      ensurePiece(take, settings, {
+        priority: 'high',
+        onProgress: (p) => {
+          done[i] = p * lengths[i];
+          job.stage = `Editing shot ${i + 1} of ${takes.length}`;
+          report();
+        },
+      }).then((piece) => {
+        done[i] = lengths[i];
+        report();
+        return piece;
+      }),
+    );
+    const results = await Promise.all(pieces);
 
     job.stage = 'Joining the shots';
     const list = path.join(dir, 'pieces.txt');
-    await fs.promises.writeFile(list, pieces.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n'));
+    await fs.promises.writeFile(list, results.map((p) => `file '${p.out.replace(/'/g, "'\\''")}'`).join('\n'));
     const filePath = path.join(dir, 'reel.mp4');
-    await ffmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', filePath]);
+    await schedule(
+      () => ffmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', filePath]),
+      'high',
+    ).promise;
 
-    await Promise.all(pieces.map((p) => fs.promises.rm(p, { force: true })));
     job.progress = 1;
     job.stage = 'Your reel is ready';
     await setStatus('done', { filePath, ...size, duration: total });

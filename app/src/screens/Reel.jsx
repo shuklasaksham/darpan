@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { editTake, getPlanTakes, getReel, keepTake, makeReel, posterUrl, reuploadTake, stripUrl } from '../api.js';
+import { editTake, getPlanTakes, getReel, keepTake, makeReel, posterUrl, reuploadTake, stripUrl, waitForUploads } from '../api.js';
 import { Paywall, useBilling } from './Plan.jsx';
 import Glyph from '../ui/Glyph.jsx';
 import { BackBar, Poster, Switch, formatTime } from '../ui/parts.jsx';
@@ -65,6 +65,8 @@ export default function Reel({ planId, shots, kept, caption = '', onKeptChange, 
     setStatus({ progress: 0, stage: 'Sending your takes' });
     const takeIds = order.map((i) => kept[i].takeId);
     try {
+      // Videos still uploading in the background have to arrive first.
+      await waitForUploads(takeIds, (p) => setStatus({ progress: 0, stage: `Uploading your takes · ${Math.round(p * 100)}%` }));
       let created;
       try {
         created = await makeReel({ takeIds, captions: withCaptions });
@@ -618,16 +620,21 @@ function Finished({ reel, captions, caption, onEdit, onDone }) {
   const [message, setMessage] = useState('');
   const [copied, setCopied] = useState(false);
 
-  // Fetch the file up front so Share opens instantly (browsers only allow the
-  // share sheet right after a tap).
+  // Have the file ready so Share opens instantly (browsers only allow the share
+  // sheet right after a tap). Fetched a few seconds in, so the video starts
+  // playing first instead of sharing the connection with a second download; the
+  // server lets the phone cache it, so it usually comes from that cache.
   useEffect(() => {
     let alive = true;
-    fetch(src)
-      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error('download failed'))))
-      .then((blob) => alive && setFile(new File([blob], `darpan-reel-${reel.id}.mp4`, { type: 'video/mp4' })))
-      .catch(() => {});
+    const timer = setTimeout(() => {
+      fetch(src, { priority: 'low' })
+        .then((r) => (r.ok ? r.blob() : Promise.reject(new Error('download failed'))))
+        .then((blob) => alive && setFile(new File([blob], `darpan-reel-${reel.id}.mp4`, { type: 'video/mp4' })))
+        .catch(() => {});
+    }, 3000);
     return () => {
       alive = false;
+      clearTimeout(timer);
     };
   }, [src, reel.id]);
 

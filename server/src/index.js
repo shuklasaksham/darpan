@@ -8,10 +8,10 @@ import { config } from './config.js';
 import { pool, migrate } from './db.js';
 import { extractAudio, extractPoster, extractStrip, probe, ffmpegAvailable } from './ffmpeg.js';
 import { analyzeTake, findFillers, ruleNotes } from './analyze.js';
-import { enqueueReel, jobStatus, sweepOldFiles, takesDir, toHinglish, trimFor } from './reels.js';
+import { enqueueReel, jobStatus, sweepOldFiles, takesDir, toHinglish, trimFor, warmPiece } from './reels.js';
 import { authRouter, loadUser, requireUser } from './auth.js';
 import { transcribeFile, transcribeWithWords, TranscribeError } from './transcribe.js';
-import { checkFrame, ClaudeError, claudeConfigured, directorNotes, trendCards, writeScript } from './claude.js';
+import { checkFrame, ClaudeError, claudeConfigured, directorNotes, hinglishCaptions, trendCards, writeScript } from './claude.js';
 import { speak, TtsError, ttsConfigured } from './tts.js';
 import { limits } from './limits.js';
 import { adminRouter } from './admin.js';
@@ -26,6 +26,11 @@ const diskStorage = multer.diskStorage({
 });
 const videoUpload = multer({ storage: diskStorage, limits: { fileSize: config.maxUploadBytes, files: 1 } });
 const audioUpload = multer({ storage: diskStorage, limits: { fileSize: 15 * 1024 * 1024, files: 1 } });
+// A take arrives as its audio (scored straight away) or its video, or both.
+const takeUpload = multer({ storage: diskStorage, limits: { fileSize: config.maxUploadBytes, files: 2 } }).fields([
+  { name: 'video', maxCount: 1 },
+  { name: 'audio', maxCount: 1 },
+]);
 
 const app = express();
 app.disable('x-powered-by');
@@ -277,15 +282,20 @@ function jpegFrames(text) {
 
 // After each take: transcribe it (fillers kept), measure it, and write up to
 // three director's notes, with Claude when available and simple rules otherwise.
-app.post('/api/takes', requireUser, limits.takes, videoUpload.single('video'), async (req, res, next) => {
-  if (!req.file) return res.status(400).json({ error: 'Send a video in the "video" field' });
-  const audioPath = `${req.file.path}.wav`;
+app.post('/api/takes', requireUser, limits.takes, takeUpload, async (req, res, next) => {
+  const video = req.files?.video?.[0] ?? null;
+  const audio = req.files?.audio?.[0] ?? null;
+  if (!video && !audio) return res.status(400).json({ error: 'Send the take as "video" or "audio"' });
+  const audioPath = video && !audio ? `${video.path}.wav` : null;
   let stored = false;
   try {
-    const meta = await probe(req.file.path).catch(() => null);
+    // Audio alone: the phone uploads the video right after (PUT /api/takes/:id/file).
+    const meta = video ? await probe(video.path).catch(() => null) : { hasAudio: true, durationSeconds: null, width: null, height: null };
     if (!meta) return res.status(422).json({ error: "Couldn't read that file as a video" });
     // Browser recordings (WebM) often carry no duration header; fall back to the recorder's timer.
     meta.durationSeconds ??= Number(req.body.durationSeconds) || null;
+    // The shape the creator framed in; the camera records the full frame and the reel crops to this.
+    const aspect = Number(req.body.aspect) > 0 ? Math.min(4, Math.max(0.25, Number(req.body.aspect))) : null;
 
     const planId = Number(req.body.planId) || null;
     const shotIndex = req.body.shotIndex === undefined ? null : Number(req.body.shotIndex);
@@ -297,8 +307,12 @@ app.post('/api/takes', requireUser, limits.takes, videoUpload.single('video'), a
     let words = null;
     if (config.deepgramApiKey && meta.hasAudio) {
       try {
-        await extractAudio(req.file.path, audioPath);
-        ({ transcript, words } = await transcribeWithWords(audioPath, 'audio/wav', language, { keepFillers: true }));
+        if (audio) {
+          ({ transcript, words } = await transcribeWithWords(audio.path, audio.mimetype, language, { keepFillers: true }));
+        } else {
+          await extractAudio(video.path, audioPath);
+          ({ transcript, words } = await transcribeWithWords(audioPath, 'audio/wav', language, { keepFillers: true }));
+        }
       } catch (err) {
         console.error('Take transcription failed:', err.message);
       }
@@ -333,12 +347,12 @@ app.post('/api/takes', requireUser, limits.takes, videoUpload.single('video'), a
     if (pool) {
       const { rows } = await pool.query(
         `INSERT INTO takes (user_id, original_name, size_bytes, duration_seconds, width, height, plan_id, shot_index,
-                            transcript, score, notes, features, notes_source, words, has_audio)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id`,
+                            transcript, score, notes, features, notes_source, words, has_audio, aspect)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id`,
         [
           req.user.id,
-          req.file.originalname,
-          req.file.size,
+          video?.originalname ?? null,
+          video?.size ?? 0,
           meta.durationSeconds,
           meta.width,
           meta.height,
@@ -351,14 +365,17 @@ app.post('/api/takes', requireUser, limits.takes, videoUpload.single('video'), a
           director.source,
           words ? JSON.stringify(words) : null,
           meta.hasAudio,
+          aspect,
         ],
       );
       id = rows[0].id;
-      // Keep the file for the reel (deleted after a day, or when another take of the shot is kept).
-      const filePath = path.join(takesDir, `${id}${path.extname(req.file.path) || '.webm'}`);
-      await fs.promises.rename(req.file.path, filePath);
-      await pool.query('UPDATE takes SET file_path = $2 WHERE id = $1', [id, filePath]);
-      stored = true;
+      if (video) {
+        // Keep the file for the reel (deleted after a day by the sweep).
+        const filePath = path.join(takesDir, `${id}${path.extname(video.path) || '.webm'}`);
+        await fs.promises.rename(video.path, filePath);
+        await pool.query('UPDATE takes SET file_path = $2 WHERE id = $1', [id, filePath]);
+        stored = true;
+      }
     }
     // Which take of this shot this is, and the best score so far ("Best of 3 takes").
     let takeNumber = 1;
@@ -386,13 +403,39 @@ app.post('/api/takes', requireUser, limits.takes, videoUpload.single('video'), a
       source: director.source,
       features: analysis.features,
     });
+    // After answering: the captions' Hinglish spellings, so making the reel doesn't wait for them.
+    if (pool && id && words?.length) spellCaptions(id, req.user.id, words);
   } catch (err) {
     next(err);
   } finally {
-    if (!stored) fs.promises.rm(req.file.path, { force: true });
-    fs.promises.rm(audioPath, { force: true });
+    if (video && !stored) fs.promises.rm(video.path, { force: true });
+    if (audio) fs.promises.rm(audio.path, { force: true });
+    if (audioPath) fs.promises.rm(audioPath, { force: true });
   }
 });
+
+/** Roman Hinglish caption words for a take, from Claude; stored for the reel. */
+async function spellCaptions(id, userId, words) {
+  if (!claudeConfigured) return;
+  try {
+    const [spelled] = await hinglishCaptions([words.map((w) => w.text)]);
+    if (!spelled) return;
+    await pool.query('UPDATE takes SET caption_words = $2 WHERE id = $1', [id, JSON.stringify(spelled)]);
+    warmTake(id, userId);
+  } catch (err) {
+    console.error('Caption spelling failed, transliterating instead:', err.message);
+  }
+}
+
+/** Starts rendering a kept take's piece of the reel in the background. */
+async function warmTake(id, userId) {
+  try {
+    const take = await ownTake(id, userId);
+    if (take?.kept && take.file_path) warmPiece(take, await planFor(userId));
+  } catch (err) {
+    console.error(`Couldn't start rendering take ${id}:`, err.message);
+  }
+}
 
 async function ownTake(id, userId) {
   if (!pool) return null;
@@ -414,6 +457,7 @@ app.post('/api/takes/:id/keep', requireUser, async (req, res, next) => {
       [req.user.id, take.plan_id, take.shot_index, take.id],
     );
     res.json({ ok: true });
+    warmTake(take.id, req.user.id);
   } catch (err) {
     next(err);
   }
@@ -484,7 +528,7 @@ function editableTake(t) {
     durationSeconds: t.duration_seconds,
     trim: { start: trim.start, end: trim.end, edited: t.trim_start != null },
     captionEdits: t.caption_edits ?? {},
-    words: words.map((w, i) => ({ text: toHinglish(w.text), start: w.start, end: w.end, filler: fillers.has(i) })),
+    words: words.map((w, i) => ({ text: t.caption_words?.[i] ?? toHinglish(w.text), start: w.start, end: w.end, filler: fillers.has(i) })),
   };
 }
 
@@ -520,6 +564,7 @@ app.patch('/api/takes/:id', requireUser, async (req, res, next) => {
       [take.id, start, end, edits && Object.keys(edits).length ? JSON.stringify(edits) : null],
     );
     res.json({ take: { ...editableTake(updated), available: await fileExists(updated.file_path) } });
+    warmTake(updated.id, req.user.id);
   } catch (err) {
     next(err);
   }
@@ -565,8 +610,15 @@ app.put('/api/takes/:id/file', requireUser, videoUpload.single('video'), async (
     const filePath = path.join(takesDir, `${take.id}${path.extname(req.file.path) || '.webm'}`);
     await fs.promises.rename(req.file.path, filePath);
     stored = true;
-    await pool.query('UPDATE takes SET file_path = $2 WHERE id = $1', [take.id, filePath]);
+    // A take scored from its audio gets its size and sound details now.
+    const meta = await probe(filePath).catch(() => null);
+    await pool.query(
+      `UPDATE takes SET file_path = $2, size_bytes = $3, width = coalesce($4, width), height = coalesce($5, height),
+         has_audio = coalesce($6, has_audio), duration_seconds = coalesce(duration_seconds, $7) WHERE id = $1`,
+      [take.id, filePath, req.file.size, meta?.width ?? null, meta?.height ?? null, meta?.hasAudio ?? null, meta?.durationSeconds ?? null],
+    );
     res.json({ ok: true });
+    warmTake(take.id, req.user.id);
   } catch (err) {
     next(err);
   } finally {
@@ -636,7 +688,7 @@ app.get('/api/reels/:id/file', requireUser, async (req, res, next) => {
       return res.status(404).json({ error: 'Reel not available' });
     }
     if (req.query.download) res.attachment(`darpan-reel-${reel.id}.mp4`);
-    res.sendFile(reel.file_path, { headers: { 'Content-Type': 'video/mp4', 'Cache-Control': 'private, no-store' } });
+    res.sendFile(reel.file_path, { headers: { 'Content-Type': 'video/mp4', 'Cache-Control': 'private, max-age=86400, immutable' } });
   } catch (err) {
     next(err);
   }

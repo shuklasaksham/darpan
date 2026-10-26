@@ -238,7 +238,8 @@ function Checking({ take }) {
     return () => clearInterval(id);
   }, []);
   const writing = since != null && Date.now() - since > 4000;
-  const mb = take.blob?.size ? (take.blob.size / 1e6).toFixed(1) : null;
+  const bytes = take.sentBytes ?? take.blob?.size;
+  const mb = bytes ? (bytes / 1e6).toFixed(1) : null;
 
   return (
     <div className="checking">

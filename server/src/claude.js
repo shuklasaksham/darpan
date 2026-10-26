@@ -16,14 +16,44 @@ export const claudeConfigured = Boolean(client);
 const isRequestProblem = (err) =>
   err instanceof Anthropic.BadRequestError || err instanceof Anthropic.NotFoundError || err instanceof Anthropic.PermissionDeniedError;
 
+// Fast mode: the same Opus model answering up to 2.5x faster, at twice the price.
+// Used where the creator is waiting on screen (take notes, frame checks).
+const FAST = { speed: 'fast', betas: ['fast-mode-2026-02-01'] };
+const fastOn = process.env.CLAUDE_FAST_MODE !== 'off';
+let fastPausedUntil = 0;
+
 /**
  * Calls Claude, stepping down when a request is rejected rather than failing:
+ * 0. with `fast`: in fast mode (with, then without, the refusal fallback); fast
+ *    mode has its own rate limit, so being rate-limited there drops to normal speed,
  * 1. with the server-side refusal fallback (beta),
  * 2. without beta options,
  * 3. on the backup model,
  * 4. without structured output (JSON is then read from the text).
  */
-async function create(params) {
+async function create(params, { fast = false } = {}) {
+  if (fast && fastOn && Date.now() > fastPausedUntil) {
+    // No SDK retries here: a busy fast lane should drop to normal speed at once.
+    const once = { maxRetries: 0 };
+    const fastAttempts = [
+      () => client.beta.messages.create({ ...params, ...FALLBACK, speed: FAST.speed, betas: [...FALLBACK.betas, ...FAST.betas] }, once),
+      () => client.beta.messages.create({ ...params, ...FAST }, once),
+    ];
+    for (const attempt of fastAttempts) {
+      try {
+        return await attempt();
+      } catch (err) {
+        if (err instanceof Anthropic.RateLimitError) {
+          // Fast mode's own limit is full: use normal speed for a minute.
+          fastPausedUntil = Date.now() + 60_000;
+          console.error('Claude fast mode is busy; using normal speed for a minute');
+          break;
+        }
+        if (!isRequestProblem(err)) throw err;
+        console.error(`Claude fast mode request rejected (${err.status}): ${err.message}`);
+      }
+    }
+  }
   const attempts = [
     () => client.beta.messages.create({ ...params, ...FALLBACK }),
     () => client.messages.create(params),
@@ -271,12 +301,12 @@ export async function writeScript({ creator, idea, format, language }) {
   const lang = SCRIPT_RULES[language] ? language : 'Hinglish';
 
   try {
-    // Don't make the creator wait on trend research: use it if it's ready within a
-    // few seconds (usually cached from the home screen's trend cards), otherwise
+    // Don't make the creator wait on trend research: use it if it's ready within
+    // 2.5 seconds (usually cached from the home screen's trend cards), otherwise
     // write without it while the research finishes in the background.
     const trends = await Promise.race([
       researchTrends(creator.niche, lang),
-      new Promise((resolve) => setTimeout(() => resolve(''), 6000)),
+      new Promise((resolve) => setTimeout(() => resolve(''), 2500)),
     ]);
     const brief = [
       `Creator's niche: ${creator.niche}`,
@@ -395,7 +425,7 @@ Say each tip the way a friend holding the phone would: short, plain, casual ("ka
           ],
         },
       ],
-    });
+    }, { fast: true });
     return parseJsonResponse(message);
   } catch (err) {
     throw wrapApiError(err);
@@ -487,7 +517,7 @@ export async function directorNotes({ shot, transcript, words, analysis, frames,
           ],
         },
       ],
-    });
+    }, { fast: true });
     const result = parseJsonResponse(message);
     result.notes = (result.notes ?? []).slice(0, 2);
     result.score = Math.max(0, Math.min(100, Math.round(result.score)));
