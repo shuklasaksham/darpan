@@ -38,6 +38,11 @@ export const verifyRazorpay = (body) => postJson('/api/billing/razorpay/verify',
 export const getRecent = () => request('/api/recent');
 export const checkFrame = (body) => postJson('/api/frame-check', body);
 export const keepTake = (id) => postJson(`/api/takes/${id}/keep`, {});
+export const getPlanTakes = (planId) => request(`/api/plans/${planId}/takes`);
+export const editTake = (id, patch) =>
+  request(`/api/takes/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+export const posterUrl = (takeId) => `/api/takes/${takeId}/poster`;
+export const stripUrl = (takeId) => `/api/takes/${takeId}/strip`;
 export const makeReel = (body) => postJson('/api/reels', body);
 export const getReel = (id) => request(`/api/reels/${id}`);
 
@@ -54,7 +59,11 @@ export function transcribe(blob, language) {
   return request('/api/transcribe', { method: 'POST', body });
 }
 
-export function uploadTake(blob, { planId, plan, shotIndex, durationSeconds, language, loudness, gaze, frames } = {}) {
+/**
+ * Sends a take for notes. XHR rather than fetch, for upload progress; a
+ * network failure rejects with `offline: true` so the take can be retried.
+ */
+export function uploadTake(blob, { planId, plan, shotIndex, durationSeconds, language, loudness, gaze, frames } = {}, onProgress) {
   const body = new FormData();
   if (language) body.append('language', language);
   if (loudness?.length) body.append('loudness', JSON.stringify(loudness));
@@ -65,7 +74,19 @@ export function uploadTake(blob, { planId, plan, shotIndex, durationSeconds, lan
   if (shotIndex !== undefined) body.append('shotIndex', shotIndex);
   if (durationSeconds) body.append('durationSeconds', durationSeconds);
   body.append('video', blob, blob.name ?? `take.${extensionFor(blob.type)}`);
-  return request('/api/takes', { method: 'POST', body });
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/takes');
+    xhr.responseType = 'json';
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
+    xhr.onload = () => {
+      const json = xhr.response ?? {};
+      if (xhr.status >= 200 && xhr.status < 300) resolve(json);
+      else reject(new ApiError(json.error || xhr.statusText || 'Upload failed', xhr.status, json));
+    };
+    xhr.onerror = () => reject(Object.assign(new ApiError("You're offline", 0, {}), { offline: true }));
+    xhr.send(body);
+  });
 }
 
 function extensionFor(mimeType = '') {

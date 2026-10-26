@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { getRecent } from '../api.js';
+import { posterUrl } from '../api.js';
+import Glyph from '../ui/Glyph.jsx';
+import { Poster, formatTime } from '../ui/parts.jsx';
 
 const ACTIVE_KEY = 'darpan.activePlan';
 
@@ -33,43 +34,74 @@ export function resumeState(item) {
   };
 }
 
-export function RecentShoots({ onResume }) {
-  const [shoots, setShoots] = useState(null);
+/** How far a shoot got: kept shots, the next shot to shoot, and a take to use as its thumbnail. */
+export function shootProgress(s) {
+  const total = s.script?.shots?.length ?? 0;
+  const available = (s.kept ?? []).filter((k) => k.available && k.shotIndex != null);
+  const done = new Set(available.map((k) => k.shotIndex));
+  const nextIndex = Array.from({ length: total }, (_, i) => i).find((i) => !done.has(i)) ?? 0;
+  return {
+    total,
+    kept: done.size,
+    ready: total > 0 && done.size >= total,
+    nextIndex,
+    posterTakeId: available.sort((a, b) => a.shotIndex - b.shotIndex)[0]?.id ?? null,
+  };
+}
 
-  useEffect(() => {
-    getRecent()
-      .then(({ shoots }) => setShoots(shoots))
-      .catch(() => setShoots([]));
-  }, []);
+function status(s) {
+  const p = shootProgress(s);
+  if (s.reel?.status === 'done') return { text: `Ready${s.reel.durationSeconds ? ` · ${formatTime(s.reel.durationSeconds)}` : ''}`, good: true };
+  if (p.ready) return { text: 'All shots kept', good: true };
+  if (p.kept === 0) return { text: 'Script only', good: false };
+  return { text: `${p.kept} of ${p.total} shots`, good: false };
+}
 
-  if (!shoots?.length) return null;
+export function RecentReels({ shoots, onResume, onStart }) {
   return (
-    <section className="stack">
-      <h3>Recent</h3>
-      <ul className="recent">
-        {shoots.map((s) => {
-          const total = s.script?.shots?.length ?? 0;
-          const done = new Set((s.kept ?? []).filter((k) => k.available).map((k) => k.shotIndex)).size;
-          const status = s.reel?.status === 'done' ? 'Reel made' : done >= total && total ? 'Ready for reel' : `${done} of ${total} shots`;
-          return (
-            <li key={s.planId}>
-              <button className="recent-item" onClick={() => onResume(resumeState(s))}>
-                <span>
-                  <strong>{s.script?.title || s.brief?.idea || 'Untitled reel'}</strong>
-                  <small className="muted">
-                    {new Date(s.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} · {status}
-                  </small>
-                </span>
-                <span className="progress-dots" aria-hidden="true">
-                  {Array.from({ length: total }, (_, i) => (
-                    <i key={i} className={(s.kept ?? []).some((k) => k.shotIndex === i && k.available) ? 'on' : ''} />
-                  ))}
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </section>
+    <main className="screen with-tabs">
+      <div className="stack tight" style={{ paddingTop: 'var(--space-6)' }}>
+        <h1 className="display" style={{ fontSize: 40 }}>Your reels</h1>
+        {shoots?.length > 0 && (
+          <p className="muted">
+            {shoots.length} {shoots.length === 1 ? 'shoot' : 'shoots'} · download within 24 hours
+          </p>
+        )}
+      </div>
+      {shoots === null && <div className="loader" aria-label="Loading" />}
+      {shoots?.length === 0 && (
+        <div className="big-state">
+          <h2>No reels yet</h2>
+          <p className="muted">Your shoots show up here, with every take you keep. Start with an idea on Home.</p>
+          <button className="primary" onClick={onStart}>Make my first reel</button>
+        </div>
+      )}
+      {shoots?.length > 0 && (
+        <ul className="recent-grid">
+          {shoots.map((s) => {
+            const p = shootProgress(s);
+            const st = status(s);
+            return (
+              <li key={s.planId}>
+                <button onClick={() => onResume(resumeState(s))}>
+                  <Poster src={p.posterTakeId ? posterUrl(p.posterTakeId) : null}>
+                    {s.reel?.status === 'done' && (
+                      <span className="badge" aria-hidden="true">
+                        <Glyph name="reel" size={18} />
+                      </span>
+                    )}
+                  </Poster>
+                  <span>
+                    <strong>{s.script?.title || s.brief?.idea || 'Untitled reel'}</strong>
+                    <br />
+                    <small className={st.good ? 'good-text' : ''}>{st.text}</small>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </main>
   );
 }

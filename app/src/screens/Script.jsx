@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { saveScript, writeScript } from '../api.js';
-import { FRAMINGS } from '../camera/framing.js';
+import { FRAMINGS, framingFor } from '../camera/framing.js';
+import Glyph from '../ui/Glyph.jsx';
+import { BackBar, FramingTile } from '../ui/parts.jsx';
+import { nicheWord } from './Home.jsx';
 
 // Start downloading and starting the camera's face detection (and the camera
 // screen's code) while the creator reads their script, so the camera opens ready.
@@ -37,19 +40,21 @@ export function fallbackScript({ idea, format, language }) {
  * Claude writes the script here, the creator edits it, and only then does the
  * camera open.
  */
-export default function Script({ shoot, health, onStart, onBack }) {
+export default function Script({ shoot, user, health, onStart, onBack }) {
   const [state, setState] = useState('loading'); // loading | ready | error
   const [error, setError] = useState('');
   const [planId, setPlanId] = useState(null);
   const [script, setScript] = useState(null);
   const [saving, setSaving] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const [editing, setEditing] = useState(null); // shot index being edited
 
   useEffect(warmUpCamera, []);
 
   useEffect(() => {
     let alive = true;
     setState('loading');
+    setEditing(null);
     if (!health?.scripts) {
       setScript(fallbackScript(shoot));
       setState('ready');
@@ -92,141 +97,203 @@ export default function Script({ shoot, health, onStart, onBack }) {
 
   if (state === 'loading') {
     return (
-      <main className="center">
-        <div className="loader" aria-hidden="true" />
-        <h2>Writing your script…</h2>
-        <p className="muted">Checking what's trending in your niche and planning only the shots you need.</p>
-      </main>
+      <div className="studio">
+        <main className="screen">
+          <BackBar onBack={onBack} title="Your script" />
+          <div className="big-state">
+            {shoot.idea && <h2 style={{ fontSize: 28 }}>“{shoot.idea}”</h2>}
+            <div className="row">
+              <div className="loader" aria-hidden="true" />
+              <p>Writing your script · checking what’s trending in {nicheWord(user?.niche)}</p>
+            </div>
+            <p className="small muted">Usually about 10 seconds</p>
+          </div>
+        </main>
+      </div>
     );
   }
 
   if (state === 'error') {
     return (
-      <main className="center">
-        <p className="error">{error}</p>
-        <div className="stack">
-          <button className="primary" onClick={() => setAttempt((n) => n + 1)}>Try again</button>
-          <button
-            onClick={() => {
-              setScript(fallbackScript(shoot));
-              setState('ready');
-            }}
-          >
-            Write it myself
-          </button>
-          <button className="link" onClick={onBack}>Back</button>
-        </div>
-      </main>
+      <div className="studio">
+        <main className="screen with-bar">
+          <BackBar onBack={onBack} title="Your script" />
+          <div className="big-state">
+            <h1>The script writer is busy</h1>
+            <p className="muted" style={{ fontSize: 17 }}>
+              We couldn’t write your script just now. Try again in a moment, or write the lines yourself.
+            </p>
+            <p className="small muted">{error}</p>
+            <button className="link strong" style={{ alignSelf: 'flex-start' }} onClick={onBack}>
+              Change my idea
+            </button>
+          </div>
+          <div className="action-bar">
+            <button
+              className="secondary"
+              onClick={() => {
+                setScript(fallbackScript(shoot));
+                setState('ready');
+              }}
+            >
+              Write it myself
+            </button>
+            <button className="primary" onClick={() => setAttempt((n) => n + 1)}>
+              Try again
+            </button>
+          </div>
+        </main>
+      </div>
     );
   }
 
-  return (
-    <main>
-      <header className="top">
-        <button className="link" onClick={onBack}>← Back</button>
-        {health?.scripts && (
-          <button className="link" onClick={() => setAttempt((n) => n + 1)}>Rewrite</button>
-        )}
-      </header>
-      <input
-        className="title-input"
-        value={script.title}
-        onChange={(e) => setScript((s) => ({ ...s, title: e.target.value }))}
-        aria-label="Reel title"
-      />
-      {script.trend_used && <p className="tag-line">Trend: {script.trend_used}</p>}
-      <p className="muted">Edit anything you like. Your lines show on the teleprompter.</p>
+  const totalSeconds = script.shots.reduce((n, s) => n + (Number(s.duration_seconds) || 0), 0);
+  const tips = [
+    script.lighting && { glyph: 'light', text: script.lighting.suggestion, avoid: script.lighting.avoid },
+    script.background && { glyph: 'frame', text: script.background.suggestion, avoid: script.background.avoid },
+  ].filter(Boolean);
 
-      <details className="card full-script" open>
-        <summary>
-          <h3>Full script</h3>
-        </summary>
-        {script.shots.map((shot, i) => (
-          <p key={i}>
-            <span className="muted">{shot.title}: </span>
-            {shot.line || <em className="muted">(no line yet)</em>}
-          </p>
-        ))}
-        {script.caption && (
+  return (
+    <div className="studio">
+      <main className="screen with-bar">
+        <BackBar
+          onBack={onBack}
+          title="Your script"
+          right={
+            health?.scripts && (
+              <button className="link strong" onClick={() => setAttempt((n) => n + 1)}>
+                Rewrite
+              </button>
+            )
+          }
+        />
+        <div className="stack">
+          <textarea
+            className="title-input"
+            value={script.title}
+            rows={2}
+            onChange={(e) => setScript((s) => ({ ...s, title: e.target.value.replace(/\n/g, ' ') }))}
+            aria-label="Reel title"
+          />
           <p className="muted">
+            {script.shots.length} {script.shots.length === 1 ? 'shot' : 'shots'} · {totalSeconds} sec
+            {script.trend_used ? ` · rides “${script.trend_used}”` : ''}
+          </p>
+        </div>
+
+        <ol className="shot-list">
+          {script.shots.map((shot, i) => (
+            <li key={i} className="shot-row">
+              <FramingTile framing={shot.framing} />
+              {editing === i ? (
+                <ShotEditor
+                  shot={shot}
+                  index={i}
+                  canRemove={script.shots.length > 1}
+                  onChange={(patch) => updateShot(i, patch)}
+                  onRemove={() => {
+                    setScript((s) => ({ ...s, shots: s.shots.filter((_, j) => j !== i) }));
+                    setEditing(null);
+                  }}
+                  onDone={() => setEditing(null)}
+                />
+              ) : (
+                <>
+                  <div className="grow">
+                    <p className="eyebrow">
+                      Shot {i + 1} · {shot.title}
+                    </p>
+                    <p className="say">{shot.line || <em className="muted">No line yet. Tap edit to add one.</em>}</p>
+                    <p className="meta">
+                      {framingFor(shot.framing).label} · {shot.duration_seconds} sec{shot.direction ? ` · ${shot.direction}` : ''}
+                    </p>
+                  </div>
+                  <button className="icon-btn bare" onClick={() => setEditing(i)} aria-label={`Edit shot ${i + 1}`}>
+                    <Glyph name="edit" size={22} />
+                  </button>
+                </>
+              )}
+            </li>
+          ))}
+        </ol>
+        {script.shots.length < 6 && (
+          <button
+            className="secondary"
+            onClick={() => {
+              setScript((s) => ({
+                ...s,
+                shots: [...s.shots, { title: `Shot ${s.shots.length + 1}`, line: '', framing: 'medium', pose: 'neutral', direction: '', duration_seconds: 5 }],
+              }));
+              setEditing(script.shots.length);
+            }}
+          >
+            <Glyph name="plus" size={20} /> Add a shot
+          </button>
+        )}
+
+        {tips.length > 0 && (
+          <ul className="tips">
+            {tips.map((t) => (
+              <li key={t.glyph}>
+                <Glyph name={t.glyph} size={22} />
+                <span>
+                  {t.text}
+                  {t.avoid?.length > 0 && <span className="muted"> Avoid {t.avoid.join(', ')}.</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {script.caption && (
+          <p className="small muted">
             Caption: {script.caption} {Array.isArray(script.hashtags) ? script.hashtags.join(' ') : ''}
           </p>
         )}
-      </details>
+        {error && <p className="error">{error}</p>}
+        <div className="action-bar">
+          <button className="primary" onClick={start} disabled={saving}>
+            {saving ? 'Saving…' : 'Start shooting'}
+          </button>
+        </div>
+      </main>
+    </div>
+  );
+}
 
-      <ol className="edit-shots">
-        {script.shots.map((shot, i) => (
-          <li key={i} className="card">
-            <div className="row between">
-              <input
-                className="shot-title"
-                value={shot.title}
-                onChange={(e) => updateShot(i, { title: e.target.value })}
-                aria-label={`Shot ${i + 1} title`}
-              />
-              {script.shots.length > 1 && (
-                <button
-                  className="link"
-                  onClick={() => setScript((s) => ({ ...s, shots: s.shots.filter((_, j) => j !== i) }))}
-                >
-                  Remove
-                </button>
-              )}
-            </div>
-            <label>
-              What you say
-              <textarea value={shot.line} rows={3} onChange={(e) => updateShot(i, { line: e.target.value })} />
-            </label>
-            <div className="row">
-              <select value={shot.framing} onChange={(e) => updateShot(i, { framing: e.target.value })} aria-label="Framing">
-                {Object.entries(FRAMINGS).map(([key, f]) => (
-                  <option key={key} value={key}>{f.label}</option>
-                ))}
-              </select>
-              <select
-                value={shot.duration_seconds}
-                onChange={(e) => updateShot(i, { duration_seconds: Number(e.target.value) })}
-                aria-label="Length"
-              >
-                {[3, 5, 8, 10, 15, 20, 30, 45, 60].map((n) => <option key={n} value={n}>{n}s</option>)}
-              </select>
-            </div>
-            {shot.direction && <p className="muted">{shot.direction}</p>}
-          </li>
-        ))}
-      </ol>
-      {script.shots.length < 6 && (
-        <button
-          onClick={() =>
-            setScript((s) => ({
-              ...s,
-              shots: [...s.shots, { title: `Shot ${s.shots.length + 1}`, line: '', framing: 'medium', pose: 'neutral', direction: '', duration_seconds: 5 }],
-            }))
-          }
-        >
-          + Add a shot
+function ShotEditor({ shot, index, canRemove, onChange, onRemove, onDone }) {
+  return (
+    <div className="shot-edit">
+      <input value={shot.title} onChange={(e) => onChange({ title: e.target.value })} aria-label={`Shot ${index + 1} name`} />
+      <textarea value={shot.line} rows={3} onChange={(e) => onChange({ line: e.target.value })} aria-label="What you say" autoFocus />
+      <div className="row">
+        <select value={shot.framing} onChange={(e) => onChange({ framing: e.target.value })} aria-label="Framing">
+          {Object.entries(FRAMINGS).map(([key, f]) => (
+            <option key={key} value={key}>
+              {f.label}
+            </option>
+          ))}
+        </select>
+        <select value={shot.duration_seconds} onChange={(e) => onChange({ duration_seconds: Number(e.target.value) })} aria-label="Length">
+          {[3, 5, 8, 10, 15, 20, 30, 45, 60].map((n) => (
+            <option key={n} value={n}>
+              {n} sec
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="row between">
+        {canRemove ? (
+          <button className="link" onClick={onRemove}>
+            Remove shot
+          </button>
+        ) : (
+          <span />
+        )}
+        <button className="primary" style={{ minHeight: 44 }} onClick={onDone}>
+          <Glyph name="check" size={18} /> Done
         </button>
-      )}
-
-      {script.background && (
-        <section className="card">
-          <h3>Background</h3>
-          <p>{script.background.suggestion}</p>
-          {script.background.avoid?.length > 0 && <p className="muted">Avoid: {script.background.avoid.join(', ')}</p>}
-        </section>
-      )}
-      {script.lighting && (
-        <section className="card">
-          <h3>Lighting</h3>
-          <p>{script.lighting.suggestion}</p>
-          {script.lighting.avoid?.length > 0 && <p className="muted">Avoid: {script.lighting.avoid.join(', ')}</p>}
-        </section>
-      )}
-
-      {error && <p className="error">{error}</p>}
-      <button className="primary sticky-cta" onClick={start} disabled={saving}>
-        {saving ? 'Saving…' : 'Looks good, open camera'}
-      </button>
-    </main>
+      </div>
+    </div>
   );
 }

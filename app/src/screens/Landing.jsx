@@ -1,7 +1,10 @@
+import { Wordmark } from '../ui/Brand.jsx';
+import Glyph from '../ui/Glyph.jsx';
+
 // Marketing page for visitors who aren't logged in.
-function LegalFooter() {
+export function LegalFooter() {
   return (
-    <footer className="landing-footer legal-links">
+    <footer className="landing-footer">
       <span>© {new Date().getFullYear()} Darpan</span>
       <span>
         <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/refunds">Refunds</a> · <a href="/contact">Contact</a>
@@ -9,46 +12,56 @@ function LegalFooter() {
     </footer>
   );
 }
-const FREE = ['3 reels a month', 'Scripts for your niche and trends', 'Live camera coach', "Director's notes on every take", '720p export with the Darpan tag'];
-const PRO = ['Unlimited reels', 'Everything in Free', 'Full HD 1080p export', 'No Darpan tag', 'Priority reel rendering'];
+
+const FREE = ['3 reels a month', 'Scripts for your niche and trends', 'Live camera coach', "Director's notes on every take", '720p with the “Shot with Darpan” tag'];
+const PRO = ['Unlimited reels for 30 days', 'Everything in Free', 'Full HD 1080p', 'No tag on your reels', 'Priority rendering'];
+
+const HOW = [
+  ['Say your idea', "Type it or say it in Hinglish. Darpan writes a short script for your niche and what's trending."],
+  ['Shoot with a coach', 'A teleprompter that follows your voice, a frame guide, and spoken tips on light and framing.'],
+  ['Post your reel', 'Trimmed to your words, captioned in Hinglish, and ready for Instagram, Shorts or WhatsApp.'],
+];
 
 export default function Landing({ onSignUp, onLogIn }) {
   return (
     <div className="landing">
       <nav className="landing-nav">
-        <a href="/" className="brand">
-          <img src="/logo.svg" alt="" width="22" height="33" />
-          <span>Darpan</span>
+        <a href="/" aria-label="Darpan home">
+          <Wordmark />
         </a>
-        <button className="link" onClick={onLogIn}>Log in</button>
+        <button className="link strong" onClick={onLogIn}>Log in</button>
       </nav>
 
       <section className="hero">
-        <p className="tag">Made for first-time Indian creators</p>
-        <h1>Shoot reels like a pro, from your phone.</h1>
-        <p className="lede">
-          Darpan writes your script, coaches you live while you shoot and hands you a finished reel with Hinglish
-          captions.
-        </p>
-        <button className="primary big" onClick={onSignUp}>Start free</button>
-        <p className="muted small">No card needed. Works on Android and iPhone.</p>
+        <h1>
+          Shoot your <span className="last">first reel.</span>
+        </h1>
+        <div className="hero-photo">
+          <img src="/img/hero-kitchen.jpg" alt="A creator filming herself in her kitchen with Darpan's frame guide" width="768" height="1376" fetchPriority="high" />
+          <span className="guide" aria-hidden="true" />
+          <span className="pill" aria-hidden="true">
+            <Glyph name="check" size={18} /> Perfect. Hold it there
+          </span>
+        </div>
+        <div className="stack loose">
+          <p className="lede">Darpan writes your script, coaches you in Hinglish while you shoot, and hands back a finished, captioned reel.</p>
+          <div className="hero-cta">
+            <button className="primary block" onClick={onSignUp}>Start free</button>
+            <p className="tiny muted center-text">3 reels a month free · Pro ₹299 for 30 days</p>
+          </div>
+        </div>
       </section>
 
       <section className="landing-section">
-        <h2>How it works</h2>
+        <h2>Three steps. One reel.</h2>
         <ol className="how">
-          <li>
-            <strong>Tell Darpan your idea</strong>
-            <span>Type it or say it in Hinglish. Darpan writes a script for your niche and what's trending.</span>
-          </li>
-          <li>
-            <strong>Shoot with a coach</strong>
-            <span>A teleprompter, a pose guide, and spoken tips on light, framing and your voice.</span>
-          </li>
-          <li>
-            <strong>Get your reel</strong>
-            <span>Trimmed, captioned and ready to post. Download or share straight to Instagram.</span>
-          </li>
+          {HOW.map(([title, body], i) => (
+            <li key={title}>
+              <span className="num">{i + 1}</span>
+              <strong>{title}</strong>
+              <span>{body}</span>
+            </li>
+          ))}
         </ol>
       </section>
 
@@ -58,20 +71,33 @@ export default function Landing({ onSignUp, onLogIn }) {
           <div className="plan">
             <h3>Free</h3>
             <p className="price">₹0</p>
-            <ul>{FREE.map((f) => <li key={f}>{f}</li>)}</ul>
+            <ul>
+              {FREE.map((f) => (
+                <li key={f}>
+                  <Glyph name="check" size={20} /> {f}
+                </li>
+              ))}
+            </ul>
             <button onClick={onSignUp}>Start free</button>
           </div>
           <div className="plan pro">
-            <p className="tag">Most popular</p>
-            <h3>Pro</h3>
+            <span className="tag" style={{ alignSelf: 'flex-start' }}>
+              <Glyph name="pro" size={14} /> Pro
+            </span>
             <p className="price">
-              ₹299<span>/month</span>
+              ₹299<span>for 30 days</span>
             </p>
-            <ul>{PRO.map((f) => <li key={f}>{f}</li>)}</ul>
+            <ul>
+              {PRO.map((f) => (
+                <li key={f}>
+                  <Glyph name="check" size={20} /> {f}
+                </li>
+              ))}
+            </ul>
             <button className="primary" onClick={() => onSignUp('pro')}>Go Pro</button>
           </div>
         </div>
-        <p className="muted small center-text">Secure payments by Razorpay. UPI, cards and netbanking. No auto-renewal.</p>
+        <p className="tiny muted center-text">Secure payments by Razorpay: UPI, cards and netbanking. No auto-renewal.</p>
       </section>
 
       <LegalFooter />
