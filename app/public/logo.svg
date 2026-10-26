@@ -1,9 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 90" width="60" height="90">
-  <title>Darpan mark</title>
-  <g transform="translate(0 -10)">
-    <g fill="none" stroke="#14161B" stroke-width="12" stroke-linecap="round">
-      <circle cx="30" cy="70" r="24"/><path d="M54 16V94"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <title>Darpan</title>
+  <rect width="100" height="100" rx="22.5" fill="#F0A23B"/>
+  <!-- The mark (60 x 90 units) at 58% of the tile's height, centred. -->
+  <g transform="translate(30.67 21) scale(0.6444)">
+    <g transform="translate(0 -10)">
+      <g fill="none" stroke="#0A0A0A" stroke-width="12" stroke-linecap="round">
+        <circle cx="30" cy="70" r="24"/><path d="M54 16V94"/>
+      </g>
+      <path fill="#FFFFFF" d="M22.22 77.78A11 11 0 0 1 37.78 62.22Z"/>
     </g>
-    <path fill="#F0A23B" d="M22.22 77.78A11 11 0 0 1 37.78 62.22Z"/>
   </g>
 </svg>

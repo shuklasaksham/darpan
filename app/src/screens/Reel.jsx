@@ -3,13 +3,15 @@ import { editTake, getPlanTakes, getReel, keepTake, makeReel, posterUrl, reuploa
 import { Paywall, useBilling } from './Plan.jsx';
 import Glyph from '../ui/Glyph.jsx';
 import { BackBar, Poster, Switch, formatTime } from '../ui/parts.jsx';
+import Player from '../ui/Player.jsx';
 
 const secs = (n) => `${Math.max(0, n).toFixed(1)}s`;
 const stamp = (n) => `${Math.floor(n / 60)}:${(n % 60).toFixed(1).padStart(4, '0')}`;
 
 /**
  * Once every shot has a kept take: put the shots in order, trim them, swap
- * takes and fix caption words; then make the reel and post it.
+ * takes and fix caption words; then make the reel and post it. A finished reel
+ * stays here, next to its shots, until a shot changes.
  */
 export default function Reel({ planId, shots, kept, caption = '', onKeptChange, onBack, onDone, onReshoot, onMissing }) {
   const [order, setOrder] = useState(() => shots.map((_, i) => i));
@@ -19,7 +21,8 @@ export default function Reel({ planId, shots, kept, caption = '', onKeptChange, 
   const [takes, setTakes] = useState(null); // every take of this shoot, from the server
   const [status, setStatus] = useState({ progress: 0, stage: '' });
   const [error, setError] = useState('');
-  const [reel, setReel] = useState(null); // { id, width, height, durationSeconds }
+  const [reel, setReel] = useState(null); // last finished reel: { id, takeIds, captions, width, height, durationSeconds, stale }
+  const [dirty, setDirty] = useState(false); // shots changed since that reel was made
   const [paywall, setPaywall] = useState(false);
   const [billing] = useBilling();
   const cancelled = useRef(false);
@@ -34,7 +37,17 @@ export default function Reel({ planId, shots, kept, caption = '', onKeptChange, 
   useEffect(() => {
     if (!planId) return setTakes([]);
     getPlanTakes(planId)
-      .then(({ takes }) => setTakes(takes))
+      .then(({ takes, reel: saved }) => {
+        setTakes(takes);
+        if (!saved) return;
+        setReel(saved);
+        if (saved.stale) return;
+        // Show the shots in the order the reel used.
+        const indexOf = (id) => Number(Object.keys(kept).find((i) => kept[i].takeId === id));
+        const savedOrder = saved.takeIds.map(indexOf);
+        if (savedOrder.length === shots.length && savedOrder.every((i) => Number.isInteger(i))) setOrder(savedOrder);
+        setCaptions(saved.captions);
+      })
       .catch(() => setTakes([]));
   }, [planId]);
 
@@ -44,6 +57,7 @@ export default function Reel({ planId, shots, kept, caption = '', onKeptChange, 
     return t ? t.trim.end - t.trim.start : (kept[i].result?.durationSeconds ?? 0);
   };
   const total = order.reduce((n, i) => n + lengthOf(i), 0);
+  const current = reel && !reel.stale && !dirty ? reel : null;
 
   async function start(withCaptions = captions) {
     setPhase('making');
@@ -88,7 +102,8 @@ export default function Reel({ planId, shots, kept, caption = '', onKeptChange, 
       const s = await getReel(id);
       setStatus({ progress: s.progress ?? 0, stage: s.stage ?? '' });
       if (s.status === 'done') {
-        setReel({ id, width: s.width, height: s.height, durationSeconds: s.durationSeconds });
+        setReel({ id, width: s.width, height: s.height, durationSeconds: s.durationSeconds, takeIds: order.map((i) => kept[i].takeId), captions, stale: false });
+        setDirty(false);
         return setPhase('done');
       }
       if (s.status === 'error') throw new Error(s.error || 'Making the reel failed. Try again.');
@@ -111,9 +126,33 @@ export default function Reel({ planId, shots, kept, caption = '', onKeptChange, 
               {shots.length > 1 ? 'Drag to reorder. ' : ''}Tap a shot to trim it, pick another take or fix its captions.
             </p>
           </div>
+          {current && (
+            <section className="reel-now">
+              <div className="reel-now-media">
+                <Player src={`/api/reels/${current.id}/file`} poster={firstPoster} fit="cover" />
+              </div>
+              <div className="stack grow">
+                <span className="eyebrow">Your reel{current.durationSeconds ? ` · ${formatTime(current.durationSeconds)}` : ''}</span>
+                <p className="small muted">All {shots.length} shots, joined{current.captions ? ' and captioned' : ''}. Change a shot below to make a new one.</p>
+                <button className="secondary" style={{ minHeight: 44 }} onClick={() => setPhase('done')}>
+                  <Glyph name="share" size={18} /> Post it
+                </button>
+              </div>
+            </section>
+          )}
+          {reel && !current && (
+            <p className="notice">
+              <Glyph name="alert" size={20} />
+              You changed some shots. Make the reel again to include them.
+            </p>
+          )}
+          {current && <h3>Shots</h3>}
           <ShotOrder
             order={order}
-            onOrder={setOrder}
+            onOrder={(o) => {
+              setOrder(o);
+              setDirty(true);
+            }}
             renderRow={(i) => {
               const t = takeInfo(kept[i].takeId);
               const score = kept[i].result?.score ?? t?.score;
@@ -141,7 +180,13 @@ export default function Reel({ planId, shots, kept, caption = '', onKeptChange, 
           />
           <div className="stack">
             <div className="opt-row">
-              <Switch checked={captions} onChange={setCaptions}>
+              <Switch
+                checked={captions}
+                onChange={(v) => {
+                  setCaptions(v);
+                  setDirty(true);
+                }}
+              >
                 <Glyph name="captions" /> Hinglish captions
               </Switch>
             </div>
@@ -158,9 +203,15 @@ export default function Reel({ planId, shots, kept, caption = '', onKeptChange, 
             </div>
           </div>
           <div className="action-bar">
-            <button className="primary" onClick={() => start()}>
-              Make my reel <Glyph name="reel" size={20} />
-            </button>
+            {current ? (
+              <button className="primary" onClick={() => setPhase('done')}>
+                Post it <Glyph name="share" size={20} />
+              </button>
+            ) : (
+              <button className="primary" onClick={() => start()}>
+                {reel ? 'Make my reel again' : 'Make my reel'} <Glyph name="reel" size={20} />
+              </button>
+            )}
           </div>
         </main>
       )}
@@ -171,7 +222,8 @@ export default function Reel({ planId, shots, kept, caption = '', onKeptChange, 
           index={editing}
           takes={(takes ?? []).filter((t) => t.shotIndex === editing)}
           keptTake={kept[editing]}
-          onSaved={(take, picked) => {
+          onSaved={(take, picked, changed) => {
+            if (changed) setDirty(true);
             setTakes((list) => list.map((t) => (t.id === take.id ? { ...t, ...take } : t)));
             if (picked) {
               onKeptChange((k) => ({ ...k, [editing]: { takeId: take.id, blob: null, url: `/api/takes/${take.id}/file`, result: { id: take.id, score: take.score } } }));
@@ -207,7 +259,7 @@ export default function Reel({ planId, shots, kept, caption = '', onKeptChange, 
       )}
 
       {phase === 'done' && reel && (
-        <Finished reel={reel} captions={captions} caption={caption} onEdit={() => setPhase('review')} onDone={onDone} />
+        <Finished reel={reel} captions={reel.captions ?? captions} caption={caption} onEdit={() => setPhase('review')} onDone={onDone} />
       )}
 
       {paywall && <Paywall billing={billing} reason={billing && billing.plan !== 'pro' && billing.reelsThisMonth >= billing.reelsPerMonth ? 'limit' : 'upgrade'} posterSrc={firstPoster} onClose={() => setPaywall(false)} />}
@@ -333,7 +385,7 @@ function ShotEditor({ shot, index, takes, keptTake, onSaved, onBack, onReshoot }
       const saved = Object.keys(patch).length ? (await editTake(take.id, patch)).take : take;
       const picked = take.id !== keptTake.takeId;
       if (picked) await keepTake(take.id);
-      onSaved({ ...take, ...saved }, picked);
+      onSaved({ ...take, ...saved }, picked, picked || Object.keys(patch).length > 0);
     } catch (err) {
       setError(err.message);
       setBusy(false);
@@ -615,10 +667,10 @@ function Finished({ reel, captions, caption, onEdit, onDone }) {
   return (
     <main className="with-bar" style={{ paddingBottom: 'calc(var(--bar-h) + var(--safe-b) + 24px)' }}>
       <div className="final-media">
-        <video src={src} controls playsInline autoPlay />
+        <Player src={src} autoPlay loop />
         <div className="over">
-          <button className="cam-btn" onClick={onDone} aria-label="Close">
-            <Glyph name="x" size={22} />
+          <button className="cam-btn" onClick={onEdit} aria-label="Back to your reel and its shots">
+            <Glyph name="back" size={22} />
           </button>
         </div>
       </div>
@@ -640,7 +692,7 @@ function Finished({ reel, captions, caption, onEdit, onDone }) {
         {message && <p className="notice">{message}</p>}
         <div className="row between">
           <button className="link strong" onClick={onEdit}>
-            Edit shots
+            See shots
           </button>
           <button className="link strong" onClick={onDone}>
             Start a new reel

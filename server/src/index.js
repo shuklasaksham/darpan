@@ -409,7 +409,7 @@ app.post('/api/takes/:id/keep', requireUser, async (req, res, next) => {
     const take = await ownTake(req.params.id, req.user.id);
     if (!take) return res.status(404).json({ error: 'Take not found' });
     await pool.query(
-      `UPDATE takes SET kept = (id = $4)
+      `UPDATE takes SET kept = (id = $4), edited_at = CASE WHEN id = $4 AND NOT kept THEN now() ELSE edited_at END
        WHERE user_id = $1 AND plan_id IS NOT DISTINCT FROM $2 AND shot_index IS NOT DISTINCT FROM $3`,
       [req.user.id, take.plan_id, take.shot_index, take.id],
     );
@@ -434,11 +434,41 @@ app.get('/api/plans/:id/takes', requireUser, async (req, res, next) => {
       numbers.set(t.shot_index, n);
       takes.push({ ...editableTake(t), takeNumber: n, available: await fileExists(t.file_path) });
     }
-    res.json({ takes });
+    res.json({ takes, reel: await latestReel(req.user.id, req.params.id, rows) });
   } catch (err) {
     next(err);
   }
 });
+
+/**
+ * The shoot's last finished reel, so the creator can come back to it instead of
+ * making it again. `stale` when a shot's kept take changed, or a kept take was
+ * trimmed or re-captioned, after the reel was made.
+ */
+async function latestReel(userId, planId, takes) {
+  const { rows: [reel] } = await pool.query(
+    `SELECT * FROM reels WHERE user_id = $1 AND plan_id = $2 AND status = 'done' ORDER BY created_at DESC LIMIT 1`,
+    [userId, planId],
+  );
+  if (!reel || !(await fileExists(reel.file_path))) return null;
+  const takeIds = reel.take_ids.map(Number);
+  const kept = takes.filter((t) => t.kept);
+  const keptIds = new Set(kept.map((t) => Number(t.id)));
+  const stale =
+    keptIds.size !== takeIds.length ||
+    takeIds.some((id) => !keptIds.has(id)) ||
+    kept.some((t) => t.edited_at && new Date(t.edited_at) > new Date(reel.created_at));
+  return {
+    id: Number(reel.id),
+    takeIds,
+    captions: reel.captions,
+    width: reel.width,
+    height: reel.height,
+    durationSeconds: reel.duration_seconds,
+    createdAt: reel.created_at,
+    stale,
+  };
+}
 
 /** What the reel editor needs to know about a take. */
 function editableTake(t) {
@@ -486,7 +516,7 @@ app.patch('/api/takes/:id', requireUser, async (req, res, next) => {
       }
     }
     const { rows: [updated] } = await pool.query(
-      'UPDATE takes SET trim_start = $2, trim_end = $3, caption_edits = $4 WHERE id = $1 RETURNING *',
+      'UPDATE takes SET trim_start = $2, trim_end = $3, caption_edits = $4, edited_at = now() WHERE id = $1 RETURNING *',
       [take.id, start, end, edits && Object.keys(edits).length ? JSON.stringify(edits) : null],
     );
     res.json({ take: { ...editableTake(updated), available: await fileExists(updated.file_path) } });

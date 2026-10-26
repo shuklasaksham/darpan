@@ -182,58 +182,59 @@ const weight = (id, issues) => (id === 'fillers' ? Math.min(15, 4 * issues.fille
 
 // --- Rule-based notes ------------------------------------------------------
 
+// Short and casual, like a friend on set: what to do next take, not a report.
+// Hindi and Hinglish use "karo" forms, which don't depend on gender.
 const NOTES = {
   no_speech: () => ({
-    en: "I couldn't hear you in this take. Check nothing is covering the mic and try again.",
-    hinglish: 'Is take mein awaaz nahi aayi. Dekhiye mic dhaka toh nahi hai, phir se try kijiye.',
-    hi: 'इस टेक में आवाज़ नहीं आई। देखिए माइक ढका तो नहीं है, फिर से कोशिश कीजिए।',
+    en: "Couldn't hear you. Is the mic covered?",
+    hinglish: 'Awaaz nahi aayi. Mic dhaka toh nahi?',
+    hi: 'आवाज़ नहीं आई। माइक ढका तो नहीं?',
   }),
-  slow_start: ({ firstWordAt }) => ({
-    en: `You started talking at ${firstWordAt.toFixed(1)} seconds. Speak the moment recording starts; the first 2 seconds decide if people stay.`,
-    hinglish: `Aapne ${firstWordAt.toFixed(1)} second baad bolna shuru kiya. Recording shuru hote hi boliye, pehle 2 second mein hi log rukte hain.`,
-    hi: `आपने ${firstWordAt.toFixed(1)} सेकंड बाद बोलना शुरू किया। रिकॉर्डिंग शुरू होते ही बोलिए, पहले दो सेकंड में ही लोग रुकते हैं।`,
+  slow_start: () => ({
+    en: 'Start talking the moment you hit record.',
+    hinglish: 'Record dabate hi bolna shuru karo.',
+    hi: 'रिकॉर्ड दबाते ही बोलना शुरू करो।',
   }),
   greeting_opener: () => ({
-    en: 'Skip "hi guys". Open straight with your hook; viewers swipe away during greetings.',
-    hinglish: '"Hi guys" chhodiye. Seedha hook se shuru kijiye, greeting pe log swipe kar dete hain.',
-    hi: '"हाय गाइज़" छोड़िए। सीधा हुक से शुरू कीजिए, ग्रीटिंग पर लोग आगे बढ़ जाते हैं।',
+    en: 'Skip "hi guys". Open with your hook.',
+    hinglish: '"Hi guys" chhodo, seedha hook se shuru karo.',
+    hi: '"हाय गाइज़" छोड़ो, सीधा हुक से शुरू करो।',
   }),
   flat_voice: () => ({
-    en: 'Your voice stayed flat. Punch the key words and let your energy rise and fall.',
-    hinglish: 'Aawaz ek jaisi flat rahi. Important words pe zor dijiye, energy upar neeche hone dijiye.',
-    hi: 'आवाज़ एक जैसी सपाट रही। ज़रूरी शब्दों पर ज़ोर दीजिए, ऊर्जा ऊपर नीचे होने दीजिए।',
+    en: 'A bit flat. Lean on the key words.',
+    hinglish: 'Thoda flat laga. Main words pe zor do.',
+    hi: 'थोड़ा सपाट लगा। ख़ास शब्दों पर ज़ोर दो।',
   }),
   trailing_off: () => ({
-    en: 'Your voice fades at the end of lines. Finish every line as strongly as you start it.',
-    hinglish: 'Line ke end mein aawaz dheemi ho jaati hai. Har line utne hi zor se khatam kijiye jitne se shuru karte hain.',
-    hi: 'लाइन के आख़िर में आवाज़ धीमी हो जाती है। हर लाइन उतने ही ज़ोर से ख़त्म कीजिए जितने से शुरू करते हैं।',
+    en: 'Keep your voice up to the end of each line.',
+    hinglish: 'Line ke end tak awaaz upar rakho.',
+    hi: 'लाइन के आख़िर तक आवाज़ ऊपर रखो।',
   }),
-  looking_at_screen: ({ fraction }) => ({
-    en: `You looked at the screen ${Math.round(fraction * 100)}% of the time. Glance at the line, then talk to the lens; that's eye contact for viewers.`,
-    // "Aapki nazar ... thi" sidesteps gendered verbs (dekh rahe the / rahi thin).
-    hinglish: `${Math.round(fraction * 100)}% time aapki nazar screen pe thi. Line dekh ke lens mein dekh kar boliye, wahi eye contact hai.`,
-    hi: `ज़्यादातर समय आपकी नज़र स्क्रीन पर थी। लाइन देखकर लेंस में देखकर बोलिए, वही आई कॉन्टैक्ट है।`,
+  looking_at_screen: () => ({
+    en: 'Look at the lens, not the screen.',
+    hinglish: 'Screen nahi, lens mein dekho.',
+    hi: 'स्क्रीन नहीं, लेंस में देखो।',
   }),
   cut_off_ending: () => ({
-    en: 'Your last word got cut off. Hold still for one beat after you finish, then stop.',
-    hinglish: 'Aakhri word kat gaya. Bolne ke baad ek second ruk ke recording band kijiye.',
-    hi: 'आख़िरी शब्द कट गया। बोलने के बाद एक पल रुककर रिकॉर्डिंग बंद कीजिए।',
+    en: 'Hold for a second after your last word.',
+    hinglish: 'Aakhri word ke baad ek second ruko.',
+    hi: 'आख़िरी शब्द के बाद एक पल रुको।',
   }),
-  fillers: ({ count, kinds }) => ({
-    en: `You said ${kinds.map((k) => `"${k}"`).join(', ')} ${count} times. A silent pause sounds far more confident.`,
-    hinglish: `Aapne ${kinds.map((k) => `"${k}"`).join(', ')} ${count} baar bola. Uski jagah chup-chaap ruk jaiye, zyada confident lagta hai.`,
-    hi: `आपने ${count} बार "${kinds.join('", "')}" बोला। उसकी जगह चुपचाप रुक जाइए, ज़्यादा भरोसेमंद लगता है।`,
+  fillers: ({ kinds }) => ({
+    en: `Drop the "${kinds[0]}". A pause sounds better.`,
+    hinglish: `"${kinds[0]}" hatao, chup rehna zyada accha lagta hai.`,
+    hi: `"${kinds[0]}" हटाओ, चुप रहना ज़्यादा अच्छा लगता है।`,
   }),
   over_length: ({ duration, plannedSeconds }) => ({
-    en: `This ran ${Math.round(duration)}s against a planned ${Math.round(plannedSeconds)}s. Cut the extra words and keep it tight.`,
-    hinglish: `Yeh ${Math.round(duration)} second chala, plan ${Math.round(plannedSeconds)} second ka tha. Extra words hataiye, tight rakhiye.`,
-    hi: `यह ${Math.round(duration)} सेकंड चला, योजना ${Math.round(plannedSeconds)} सेकंड की थी। फ़ालतू शब्द हटाइए।`,
+    en: `${Math.round(duration)}s for a ${Math.round(plannedSeconds)}s shot. Keep it tighter.`,
+    hinglish: `${Math.round(plannedSeconds)} second ka shot tha, ${Math.round(duration)} chala. Thoda chhota karo.`,
+    hi: `${Math.round(plannedSeconds)} सेकंड का शॉट था, ${Math.round(duration)} चला। थोड़ा छोटा करो।`,
   }),
 };
 
-/** Up to three notes from the measured issues, in the creator's language. */
+/** Up to two notes from the measured issues, in the creator's language. */
 export function ruleNotes(analysis, language) {
-  return analysis.ranked.slice(0, 3).map((id) => {
+  return analysis.ranked.slice(0, 2).map((id) => {
     const t = NOTES[id](analysis.issues[id]);
     const text = language === 'English' ? t.en : language === 'Hindi' ? t.hi : t.hinglish;
     return { issue: id, note: text, note_spoken: language === 'English' ? t.en : t.hi };

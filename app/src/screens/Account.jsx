@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import Glyph from '../ui/Glyph.jsx';
 import { Switch, readPref, resetDate, shortDate, writePref } from '../ui/parts.jsx';
-import { LANGUAGES, savedLanguage, saveLanguage } from './Home.jsx';
+import { LANGUAGE_OPTIONS, savedLanguage, saveLanguage } from './Home.jsx';
+import Picker from '../ui/Picker.jsx';
 import { Paywall, useBilling } from './Plan.jsx';
 import { shootProgress } from './Recent.jsx';
 import { posterUrl } from '../api.js';
@@ -60,23 +61,19 @@ export default function Account({ user, shoots, onLogOut }) {
 
       <ul className="list">
         <li>
-          <label className="list-row" style={{ fontWeight: 400 }}>
+          <div className="list-row" style={{ cursor: 'default' }}>
             Script language
-            <span className="value">
-              <select
-                value={language}
-                onChange={(e) => {
-                  setLanguage(e.target.value);
-                  saveLanguage(e.target.value);
-                }}
-              >
-                {LANGUAGES.map((l) => (
-                  <option key={l}>{l}</option>
-                ))}
-              </select>
-              <Glyph name="chevron" size={18} />
-            </span>
-          </label>
+            <Picker
+              variant="value"
+              label="Script language"
+              value={language}
+              options={LANGUAGE_OPTIONS}
+              onChange={(v) => {
+                setLanguage(v);
+                saveLanguage(v);
+              }}
+            />
+          </div>
         </li>
         <li>
           <div className="list-row">

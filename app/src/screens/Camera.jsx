@@ -585,12 +585,8 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
         (progress) => setTake((t) => (t?.url === url ? { ...t, progress } : t)),
       );
       if (closedRef.current) return;
+      // The creator chooses to read the notes or hear them (TakeReview), never both at once.
       setTake({ status: 'done', url, blob, result, progress: 1 });
-      // Darpan reads the top note aloud.
-      const top = result.notes?.[0];
-      if (top && !live.current.muted) {
-        speakerRef.current?.say(top.note_spoken || top.note, language === 'English' ? 'en-IN' : 'hi-IN');
-      }
     } catch (err) {
       if (closedRef.current) return;
       setTake({ status: err.offline ? 'offline' : 'error', url, blob, error: err.message });
@@ -834,6 +830,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
           shotIndex={lastSend.current?.shotIndex ?? shotIndex}
           isLast={keepFinishes}
           speaker={speakerRef.current}
+          language={language}
           onRetake={closeTake}
           onKeep={keepAndNext}
           onRetry={retryUpload}

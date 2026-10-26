@@ -10,6 +10,7 @@ const GENDERS = [
 ];
 const NICHES = ['Food', 'Fitness', 'Comedy', 'Beauty', 'Tech', 'Money', 'Travel', 'Fashion', 'Education'];
 const OTHER = 'Something else';
+const USERNAME = /^[a-z0-9._]{3,20}$/;
 
 export default function Auth({ initialMode = 'signup', onSignedIn, onExit }) {
   const [mode, setMode] = useState(initialMode === 'login' ? 'login' : 'signup');
@@ -95,6 +96,7 @@ function SignUp({ onSignedIn, onBack, onLogIn }) {
       {step === 'about' && (
         <form
           id="step"
+          noValidate
           className="stack loose"
           onSubmit={(e) => {
             e.preventDefault();
@@ -165,9 +167,11 @@ function SignUp({ onSignedIn, onBack, onLogIn }) {
       {step === 'username' && (
         <form
           id="step"
+          noValidate
           className="stack loose"
           onSubmit={(e) => {
             e.preventDefault();
+            if (!USERNAME.test(username)) return setError('Use 3 to 20 small letters, numbers, dots or underscores.');
             setError('');
             setStep('pin');
           }}
@@ -188,8 +192,6 @@ function SignUp({ onSignedIn, onBack, onLogIn }) {
             <input
               value={username}
               onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/\s/g, ''))}
-              pattern="[a-z0-9._]{3,20}"
-              title="3–20 lowercase letters, numbers, dots or underscores"
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
@@ -199,6 +201,7 @@ function SignUp({ onSignedIn, onBack, onLogIn }) {
             {taken && username === taken && (
               <span className="hint">Someone already has “{taken}”. Pick one below or add a word.</span>
             )}
+            {error && step === 'username' && <span className="field-state bad">{error}</span>}
           </label>
           {suggestions.length > 0 && (
             <div className="stack">
