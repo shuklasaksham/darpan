@@ -3,23 +3,23 @@
 // priority: lower wins. en / hinglish are shown; en / hi are spoken (Hindi and
 // Hinglish users hear Devanagari, which Indian TTS voices read naturally).
 export const TIPS = {
-  no_face: { priority: 1, en: "I can't see your face", hinglish: 'Aapka chehra nahi dikh raha', hi: 'आपका चेहरा नहीं दिख रहा' },
-  no_body: { priority: 1, en: 'Step back so I can see all of you', hinglish: 'Peeche jaiye, aap poore dikhne chahiye', hi: 'पीछे जाइए, आप पूरे दिखने चाहिए' },
-  raise_phone: { priority: 2, en: 'Raise the phone', hinglish: 'Phone thoda upar kijiye', hi: 'फ़ोन थोड़ा ऊपर कीजिए' },
-  lower_phone: { priority: 2, en: 'Lower the phone', hinglish: 'Phone thoda neeche kijiye', hi: 'फ़ोन थोड़ा नीचे कीजिए' },
-  show_feet: { priority: 2, en: 'Step back so your feet are in the frame', hinglish: 'Peeche jaiye, pair frame mein aane chahiye', hi: 'पीछे जाइए, पैर फ़्रेम में आने चाहिए' },
-  come_closer: { priority: 3, en: 'Come a little closer', hinglish: 'Thoda paas aaiye', hi: 'थोड़ा पास आइए' },
-  move_back: { priority: 3, en: 'Move back a little', hinglish: 'Thoda peeche jaiye', hi: 'थोड़ा पीछे जाइए' },
-  step_left: { priority: 4, en: 'Move a little to your left', hinglish: 'Thoda apne left jaiye', hi: 'थोड़ा अपने बाएँ जाइए' },
-  step_right: { priority: 4, en: 'Move a little to your right', hinglish: 'Thoda apne right jaiye', hi: 'थोड़ा अपने दाएँ जाइए' },
-  backlight: { priority: 5, en: 'Light is behind you. Turn to face the light', hinglish: 'Light aapke peeche hai. Light ki taraf mudiye', hi: 'रोशनी आपके पीछे है। रोशनी की तरफ़ मुड़िए' },
-  face_dark: { priority: 5, en: 'Your face is too dark. Face a window or a lamp', hinglish: 'Chehre pe light kam hai. Window ya lamp ki taraf mudiye', hi: 'चेहरे पर रोशनी कम है। खिड़की या लैंप की तरफ़ मुड़िए' },
-  face_bright: { priority: 5, en: 'Too much light on your face', hinglish: 'Chehre pe bahut zyada light hai', hi: 'चेहरे पर बहुत ज़्यादा रोशनी है' },
-  room_dark: { priority: 5, en: 'The room is too dark. Turn on a light', hinglish: 'Kamre mein andhera hai. Light jalaiye', hi: 'कमरे में अंधेरा है। लाइट जलाइए' },
-  mic_silent: { priority: 6, en: "I can't hear your mic", hinglish: 'Mic se awaaz nahi aa rahi', hi: 'माइक से आवाज़ नहीं आ रही' },
-  too_loud: { priority: 7, en: 'Too loud. Hold the phone a little further away', hinglish: 'Awaaz bahut tez hai. Phone thoda door rakhiye', hi: 'आवाज़ बहुत तेज़ है। फ़ोन थोड़ा दूर रखिए' },
-  noisy: { priority: 7, en: "It's noisy here. Find a quieter spot", hinglish: 'Yahan shor hai. Koi shaant jagah dhoondhiye', hi: 'यहाँ शोर है। कोई शांत जगह ढूँढिए' },
-  blurry: { priority: 8, en: 'Wipe your camera lens', hinglish: 'Camera lens saaf kijiye', hi: 'कैमरे का लेंस साफ़ कीजिए' },
+  no_face: { priority: 1, en: "Can't see you. Come into the frame", hinglish: 'Aap dikh nahi rahe. Frame mein aao', hi: 'आप दिख नहीं रहे। फ़्रेम में आओ' },
+  no_body: { priority: 1, en: 'Step back a bit, I need all of you', hinglish: 'Thoda peeche jao, poore dikhne chahiye', hi: 'थोड़ा पीछे जाओ, पूरे दिखने चाहिए' },
+  raise_phone: { priority: 2, en: 'Phone a little higher', hinglish: 'Phone thoda upar karo', hi: 'फ़ोन थोड़ा ऊपर करो' },
+  lower_phone: { priority: 2, en: 'Phone a little lower', hinglish: 'Phone thoda neeche karo', hi: 'फ़ोन थोड़ा नीचे करो' },
+  show_feet: { priority: 2, en: 'Step back till your feet show', hinglish: 'Peeche jao, pair bhi dikhne chahiye', hi: 'पीछे जाओ, पैर भी दिखने चाहिए' },
+  come_closer: { priority: 3, en: 'Come a little closer', hinglish: 'Thoda paas aao', hi: 'थोड़ा पास आओ' },
+  move_back: { priority: 3, en: 'Go back a little', hinglish: 'Thoda peeche jao', hi: 'थोड़ा पीछे जाओ' },
+  step_left: { priority: 4, en: 'A little to your left', hinglish: 'Thoda apne left ko', hi: 'थोड़ा अपने बाएँ को' },
+  step_right: { priority: 4, en: 'A little to your right', hinglish: 'Thoda apne right ko', hi: 'थोड़ा अपने दाएँ को' },
+  backlight: { priority: 5, en: 'Light is behind you. Turn and face it', hinglish: 'Light peeche hai. Uski taraf ghumo', hi: 'रोशनी पीछे है। उसकी तरफ़ घूमो' },
+  face_dark: { priority: 5, en: 'Too dark. Face a window or a lamp', hinglish: 'Chehra dark hai. Window ki taraf ghumo', hi: 'चेहरा अँधेरे में है। खिड़की की तरफ़ घूमो' },
+  face_bright: { priority: 5, en: 'Too bright on your face. Step away a bit', hinglish: 'Chehre pe light zyada hai. Thoda hato', hi: 'चेहरे पर रोशनी ज़्यादा है। थोड़ा हटो' },
+  room_dark: { priority: 5, en: "It's dark in here. Switch on a light", hinglish: 'Andhera hai. Light jala lo', hi: 'अँधेरा है। लाइट जला लो' },
+  mic_silent: { priority: 6, en: "Can't hear the mic", hinglish: 'Mic se awaaz nahi aa rahi', hi: 'माइक से आवाज़ नहीं आ रही' },
+  too_loud: { priority: 7, en: 'Too loud. Hold the phone further away', hinglish: 'Bahut loud hai. Phone thoda door rakho', hi: 'बहुत तेज़ है। फ़ोन थोड़ा दूर रखो' },
+  noisy: { priority: 7, en: 'Bit noisy here. Find a quieter spot', hinglish: 'Shor hai. Koi shaant jagah dhoondho', hi: 'शोर है। कोई शांत जगह ढूँढो' },
+  blurry: { priority: 8, en: 'Looks blurry. Wipe the lens', hinglish: 'Blurry hai. Lens saaf kar lo', hi: 'धुँधला है। लेंस साफ़ कर लो' },
 };
 
 export const PERSIST_MS = 1500;
@@ -98,6 +98,7 @@ export class Speaker {
 
   async say(text, languageCode) {
     this.speaking = true;
+    const turn = (this.turn = (this.turn ?? 0) + 1);
     try {
       if (this.useSarvam) {
         await this.playSarvam(text, languageCode);
@@ -105,11 +106,13 @@ export class Speaker {
         await this.playDevice(text, languageCode);
       }
     } catch {
+      // Stopped on purpose (stop() or a newer line): don't fall back and say it again.
+      if (turn !== this.turn) return;
       try {
         await this.playDevice(text, languageCode);
       } catch {}
     } finally {
-      this.speaking = false;
+      if (turn === this.turn) this.speaking = false;
       this.lastAt = Date.now();
     }
   }
@@ -153,7 +156,9 @@ export class Speaker {
   }
 
   stop() {
+    this.turn = (this.turn ?? 0) + 1;
     this.audio?.pause();
+    this.audio?.onended?.(); // settle the clip that was playing
     if ('speechSynthesis' in window) speechSynthesis.cancel();
     this.speaking = false;
   }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import Glyph from '../ui/Glyph.jsx';
+import { readPref, writePref } from '../ui/parts.jsx';
 
 const BREAKDOWN = [
   ['hook', 'Hook'],
@@ -11,18 +12,11 @@ const BREAKDOWN = [
  * After a take: checking it (camera off), then the score, its breakdown and
  * the director's notes. Offline takes wait on the phone and retry.
  */
-export default function TakeReview({ take, shot, shotIndex, isLast, speaker, onRetake, onKeep, onRetry }) {
+export default function TakeReview({ take, shot, shotIndex, isLast, speaker, language, onRetake, onKeep, onRetry }) {
   const videoRef = useRef(null);
   const [withSound, setWithSound] = useState(false);
-  const [reading, setReading] = useState(false);
+  const [mode, setMode] = useState(() => readPref('notesMode', 'read')); // read | listen
   const result = take.result;
-
-  // Show "Reading note 1" while Darpan says it out loud.
-  useEffect(() => {
-    if (take.status !== 'done') return;
-    const id = setInterval(() => setReading(Boolean(speaker?.speaking)), 300);
-    return () => clearInterval(id);
-  }, [take.status, speaker]);
 
   // Back online: send the waiting take by itself.
   useEffect(() => {
@@ -43,7 +37,7 @@ export default function TakeReview({ take, shot, shotIndex, isLast, speaker, onR
             className="icon-btn ink play-center"
             onClick={() => {
               setWithSound(true);
-              speaker?.stop();
+              setMode('read');
               if (videoRef.current) videoRef.current.currentTime = 0;
             }}
             aria-label="Play with sound"
@@ -90,31 +84,23 @@ export default function TakeReview({ take, shot, shotIndex, isLast, speaker, onR
               <BestOf result={result} />
             </div>
             {result.breakdown && <Breakdown breakdown={result.breakdown} />}
-            <div className="row between">
-              <h2>Director’s notes</h2>
-              {reading && result.notes?.length > 0 && (
-                <span className="reading">
-                  <Glyph name="voice" size={16} /> Reading note 1
-                </span>
-              )}
-            </div>
-            {result.praise && <p className="muted">{result.praise}</p>}
             {result.notes?.length ? (
-              <ul className="notes">
-                {result.notes.map((n, i) => (
-                  <li key={i}>{n.note}</li>
-                ))}
-              </ul>
+              <Notes
+                result={result}
+                mode={mode}
+                onMode={(m) => {
+                  setMode(m);
+                  writePref('notesMode', m);
+                  if (m === 'listen') setWithSound(false);
+                }}
+                speaker={speaker}
+                language={language}
+              />
             ) : (
-              <p>That’s a keeper. Nothing to fix.</p>
-            )}
-            {result.transcript && (
-              <details>
-                <summary className="small muted" style={{ cursor: 'pointer' }}>
-                  What Darpan heard
-                </summary>
-                <p className="muted" style={{ marginTop: 8 }}>{result.transcript}</p>
-              </details>
+              <>
+                <h2>That’s a keeper</h2>
+                <p className="muted">{result.praise || 'Nothing to fix. Keep it and move on.'}</p>
+              </>
             )}
           </>
         )}
@@ -142,6 +128,76 @@ export default function TakeReview({ take, shot, shotIndex, isLast, speaker, onR
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * The notes, read on screen or heard out loud: one or the other, never both.
+ * Listening reads them one after another; switching to Read stops the voice.
+ */
+function Notes({ result, mode, onMode, speaker, language }) {
+  const [playing, setPlaying] = useState(-1); // index being spoken
+  const runRef = useRef(0);
+  const notes = result.notes;
+  const code = language === 'English' ? 'en-IN' : 'hi-IN';
+
+  async function listen() {
+    const run = ++runRef.current;
+    speaker?.stop();
+    for (const [i, n] of notes.entries()) {
+      if (runRef.current !== run) return;
+      setPlaying(i);
+      await speaker?.say(n.note_spoken || n.note, code);
+    }
+    if (runRef.current === run) setPlaying(-1);
+  }
+
+  useEffect(() => {
+    if (mode === 'listen') listen();
+    return () => {
+      runRef.current++;
+      speaker?.stop();
+      setPlaying(-1);
+    };
+  }, [mode]);
+
+  return (
+    <section className="stack">
+      <div className="row between">
+        <h2>{notes.length === 1 ? 'One thing to try' : `${notes.length} things to try`}</h2>
+        <div className="segmented" role="radiogroup" aria-label="How to get your notes">
+          <button role="radio" aria-checked={mode === 'read'} onClick={() => onMode('read')}>
+            Read
+          </button>
+          <button role="radio" aria-checked={mode === 'listen'} onClick={() => onMode('listen')}>
+            <Glyph name="speaker" size={16} /> Listen
+          </button>
+        </div>
+      </div>
+      {mode === 'read' ? (
+        <>
+          {result.praise && <p className="muted">{result.praise}</p>}
+          <ul className="notes">
+            {notes.map((n, i) => (
+              <li key={i}>{n.note}</li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <div className="listening-card" aria-live="polite">
+          <span className={`bars ${playing >= 0 ? 'on' : ''}`} aria-hidden="true">
+            <i />
+            <i />
+            <i />
+            <i />
+          </span>
+          <span className="grow">{playing >= 0 ? `Note ${playing + 1} of ${notes.length}` : 'Done'}</span>
+          <button className="link strong" onClick={listen}>
+            {playing >= 0 ? 'Start over' : 'Play again'}
+          </button>
+        </div>
+      )}
+    </section>
   );
 }
 

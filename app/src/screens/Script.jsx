@@ -4,6 +4,14 @@ import { FRAMINGS, framingFor } from '../camera/framing.js';
 import Glyph from '../ui/Glyph.jsx';
 import { BackBar, FramingTile } from '../ui/parts.jsx';
 import { nicheWord } from './Home.jsx';
+import Picker from '../ui/Picker.jsx';
+
+const FRAMING_HINTS = {
+  closeup: 'Just your face',
+  medium: 'Chest up, for talking',
+  waist_up: 'Hands and props in view',
+  full_body: 'Head to toe',
+};
 
 // Start downloading and starting the camera's face detection (and the camera
 // screen's code) while the creator reads their script, so the camera opens ready.
@@ -267,20 +275,20 @@ function ShotEditor({ shot, index, canRemove, onChange, onRemove, onDone }) {
       <input value={shot.title} onChange={(e) => onChange({ title: e.target.value })} aria-label={`Shot ${index + 1} name`} />
       <textarea value={shot.line} rows={3} onChange={(e) => onChange({ line: e.target.value })} aria-label="What you say" autoFocus />
       <div className="row">
-        <select value={shot.framing} onChange={(e) => onChange({ framing: e.target.value })} aria-label="Framing">
-          {Object.entries(FRAMINGS).map(([key, f]) => (
-            <option key={key} value={key}>
-              {f.label}
-            </option>
-          ))}
-        </select>
-        <select value={shot.duration_seconds} onChange={(e) => onChange({ duration_seconds: Number(e.target.value) })} aria-label="Length">
-          {[3, 5, 8, 10, 15, 20, 30, 45, 60].map((n) => (
-            <option key={n} value={n}>
-              {n} sec
-            </option>
-          ))}
-        </select>
+        <Picker
+          label="Framing"
+          title="How close is the camera?"
+          value={shot.framing}
+          options={Object.entries(FRAMINGS).map(([key, f]) => ({ value: key, label: f.label, hint: FRAMING_HINTS[key] }))}
+          onChange={(v) => onChange({ framing: v })}
+        />
+        <Picker
+          label="Length"
+          title="How long is this shot?"
+          value={Number(shot.duration_seconds)}
+          options={[...new Set([3, 5, 8, 10, 15, 20, 30, 45, 60, Number(shot.duration_seconds)])].sort((a, b) => a - b).map((n) => ({ value: n, label: `${n} sec` }))}
+          onChange={(v) => onChange({ duration_seconds: v })}
+        />
       </div>
       <div className="row between">
         {canRemove ? (

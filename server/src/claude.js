@@ -191,8 +191,8 @@ const shotSchema = {
     title: { type: 'string', description: 'Two to four words, e.g. "Hook" or "Dish 2: poha"' },
     framing: { type: 'string', enum: FRAMINGS },
     pose: { type: 'string', enum: POSES },
-    line: { type: 'string', description: 'Exactly what the creator says to camera in this shot' },
-    direction: { type: 'string', description: 'One short sentence on what to do or show' },
+    line: { type: 'string', description: 'Exactly what the creator says to camera in this shot, the way they would actually talk' },
+    direction: { type: 'string', description: 'What to do or show, said like a friend would, under 10 words' },
     duration_seconds: { type: 'number' },
   },
 };
@@ -244,7 +244,18 @@ lighting: one specific suggestion for this script (for example "sit facing a win
 
 The lines, read in order, must form one complete script: hook first, then the content, and the last shot ends with a short call to action (follow, comment or save).
 
-Keep the creator's idea exactly as they gave it; don't swap it for a different topic. Use the trend notes only where they genuinely fit.`;
+Keep the creator's idea exactly as they gave it; don't swap it for a different topic. Use the trend notes only where they genuinely fit.
+
+HOW IT SHOULD SOUND (this matters more than anything else):
+Write the way this person would actually say it to a friend on a video call, not the way a brand or a copywriter writes. Read every line out loud in your head; if it sounds like an ad, a LinkedIn post or a presenter, rewrite it.
+- Everyday words and short sentences. Mix short and longer ones. Half-sentences are fine ("Sach bataun? Pehle main bhi yahi karti thi.").
+- The hook is one specific, concrete claim, question or moment from their own life. No hype.
+- One real detail beats three adjectives: a price, a time, a place, a name, a small mistake they made.
+- Never use: "Hey guys", "Hi everyone", "In today's video", "Let's dive in", "without further ado", "game-changer", "unlock", "elevate", "level up", "journey", "secret sauce", "must-try", "you won't believe", "trust me", "mind-blowing", "ultimate", "hack" (unless it's literally the niche), "smash that like button". No lists of three for rhythm, no stacked exclamation marks, no emojis or hashtags in spoken lines.
+- The call to action sounds like a person asking, not a template: "Try karke batana, theek laga ya nahi" rather than "Like, share and subscribe!".
+- direction: how a friend holding the phone would say it, under 10 words ("Cup lens ke paas lao", "Pan ki taraf ishaara karo"). Not stage directions.
+- title: what they'd call it when telling a friend, under 6 words. caption: one natural line plus at most 3 hashtags.
+- background and lighting: say it plainly and briefly, like advice from a friend ("Window ke saamne baitho, subah ki light best hai").`;
 
 const HINGLISH_WORDS =
   /\b(hai|hain|kya|nahi|nahin|aaj|mein|aur|bhi|bas|yaar|dekho|kaise|kyun|toh|wala|wali|karo|karte|karti|karta|hoon|raha|rahi|sabse|accha|chalo|dosto)\b/gi;
@@ -325,7 +336,7 @@ const verdict = {
   required: ['ok', 'tip', 'tip_spoken'],
   properties: {
     ok: { type: 'boolean' },
-    tip: { type: 'string', description: 'If not ok: one short instruction, under 10 words. Empty if ok.' },
+    tip: { type: 'string', description: 'If not ok: what to do, under 8 words, said like a friend ("Thoda window ki taraf ghumo"). Empty if ok.' },
     tip_spoken: { type: 'string', description: 'tip as it should be spoken aloud (see language rules)' },
   },
 };
@@ -364,7 +375,7 @@ export async function checkFrame({ imageBase64, shot, script, metrics, language 
 - framing: does the framing match the planned shot (${shot?.framing ?? 'medium'})?
 - clutter: is the background distracting for this content?
 - angle: is the phone at a flattering height (around eye level, not looking up the nose)?
-Be encouraging and practical. ${SPOKEN_RULES[lang]}`,
+Say each tip the way a friend holding the phone would: short, plain, casual ("karo", not "kijiye"). ${SPOKEN_RULES[lang]}`,
       messages: [
         {
           role: 'user',
@@ -413,7 +424,7 @@ const noteSchema = {
         'other',
       ],
     },
-    note: { type: 'string', description: 'One or two short sentences: what happened, then exactly what to do next take' },
+    note: { type: 'string', description: 'What to do on the next take, under 12 words, like a friend on set' },
     note_spoken: { type: 'string', description: 'note as it should be spoken aloud (see language rules)' },
   },
 };
@@ -424,14 +435,14 @@ const takeSchema = {
   required: ['score', 'notes', 'praise'],
   properties: {
     score: { type: 'integer', description: '0-100' },
-    notes: { type: 'array', items: noteSchema, description: 'At most 3, most important first' },
-    praise: { type: 'string', description: 'One specific thing that worked, in the same language' },
+    notes: { type: 'array', items: noteSchema, description: 'At most 2, most important first' },
+    praise: { type: 'string', description: 'One specific thing that worked, under 8 words, in the same language' },
   },
 };
 
-const TAKE_SYSTEM = `You are the art director on Darpan, coaching a first-time Indian creator between takes of a vertical Reel. Be warm, specific and brief, like a good director on set.
+const TAKE_SYSTEM = `You are the art director on Darpan, coaching a first-time Indian creator between takes of a vertical Reel. Talk like a friend who knows filming, standing next to them: warm, direct, few words.
 
-Give at most 3 notes, most important first, and only for problems the evidence supports. Prioritise the mistakes beginners miss:
+Give at most 2 notes, most important first, and only for problems the evidence supports. Prioritise the mistakes beginners miss:
 - slow_start: nothing said in the first 2 seconds, or opening with "hi guys" / greetings (greeting_opener)
 - flat_voice: little variation in loudness; trailing_off: the voice drops at the end of lines
 - looking_at_screen: eyes on the phone screen instead of the lens (the front camera sits above the screen, so eyes aimed slightly down in the frames means screen)
@@ -440,7 +451,8 @@ Give at most 3 notes, most important first, and only for problems the evidence s
 - over_length: well over the planned length
 Use "other" only for something clearly more important than all of these. A good take can have zero or one note.
 
-Each note says what happened and exactly what to do on the next take, in second person, using gender-neutral Hindi forms ("kijiye", "aapki awaaz", never "aap kar rahe/rahi the").
+Each note is one short instruction for the next take, under 12 words. Say what to do, not a report of what went wrong ("Lens mein dekho, screen mein nahi", not "You were looking at the screen 40% of the time, which reduces eye contact"). No numbers unless they help, no jargon ("engagement", "retention", "delivery"), no filler praise like "Great job!". Use casual, gender-neutral Hindi forms: "karo", "dekho", "ruko" (never "kar rahe the" / "kar rahi thi").
+praise: one specific thing that worked, under 8 words ("Hook ekdum seedha tha"). Leave it empty rather than generic.
 The on-device measurements and the rule-based findings are evidence, not orders: the frames and transcript can overrule them. Start from the rule score and adjust by at most 15 points.`;
 
 export async function directorNotes({ shot, transcript, words, analysis, frames, language }) {
@@ -477,7 +489,7 @@ export async function directorNotes({ shot, transcript, words, analysis, frames,
       ],
     });
     const result = parseJsonResponse(message);
-    result.notes = (result.notes ?? []).slice(0, 3);
+    result.notes = (result.notes ?? []).slice(0, 2);
     result.score = Math.max(0, Math.min(100, Math.round(result.score)));
     return result;
   } catch (err) {
@@ -570,7 +582,7 @@ export async function trendCards({ niche, language }) {
       model: MODEL,
       max_tokens: 3000,
       output_config: { effort: 'low', format: { type: 'json_schema', schema: cardsSchema } },
-      system: `You suggest reel ideas for a first-time Indian creator who films alone on a phone. Give 4 to 6 specific, doable ideas for their niche that ride what's trending now. ${SCRIPT_RULES[lang]}`,
+      system: `You suggest reel ideas for a first-time Indian creator who films alone on a phone. Give 4 to 6 specific, doable ideas for their niche that ride what's trending now. Write each title the way a creator would describe the idea to a friend (under 8 words, no hype words like "ultimate", "hack", "game-changer"), and each "why" in one short plain line. ${SCRIPT_RULES[lang]}`,
       messages: [
         {
           role: 'user',

@@ -5,8 +5,13 @@ import { resumeState, shootProgress } from './Recent.jsx';
 import { Wordmark } from '../ui/Brand.jsx';
 import Glyph from '../ui/Glyph.jsx';
 import { Poster } from '../ui/parts.jsx';
+import Picker from '../ui/Picker.jsx';
 
-export const LANGUAGES = ['Hinglish', 'Hindi', 'English'];
+export const LANGUAGE_OPTIONS = [
+  { value: 'Hinglish', label: 'Hinglish', hint: 'Hindi and English, in Roman letters' },
+  { value: 'Hindi', label: 'Hindi', hint: 'देवनागरी में' },
+  { value: 'English', label: 'English', hint: 'Simple Indian English' },
+];
 const MAX_VOICE_SECONDS = 60;
 const CARD_GLYPHS = ['reel', 'idea', 'shoot', 'light', 'frame'];
 
@@ -84,11 +89,7 @@ export default function Home({ user, health, shoots, onShoot, onResume, onAccoun
             aria-label="Your reel idea"
           />
           <div className="row">
-            <select value={language} onChange={(e) => setLanguage(e.target.value)} aria-label="Script language">
-              {LANGUAGES.map((l) => (
-                <option key={l}>{l}</option>
-              ))}
-            </select>
+            <Picker variant="inline" label="Script language" value={language} options={LANGUAGE_OPTIONS} onChange={setLanguage} />
             {health?.voice && (
               <MicButton
                 language={language}
