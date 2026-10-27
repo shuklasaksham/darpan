@@ -34,6 +34,8 @@ export const getTrends = (language) => request(`/api/trends?language=${encodeURI
 export const writeScript = (brief) => postJson('/api/script', brief);
 export const saveScript = (planId, script) =>
   request(`/api/plans/${planId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ script }) });
+export const savePost = (planId, post) =>
+  request(`/api/plans/${planId}/post`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(post) });
 export const getBilling = () => request('/api/billing');
 export const startCheckout = () => postJson('/api/billing/checkout', {});
 export const verifyRazorpay = (body) => postJson('/api/billing/razorpay/verify', body);

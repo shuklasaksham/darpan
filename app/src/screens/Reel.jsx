@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { editTake, getPlanTakes, getReel, keepTake, makeReel, posterUrl, reuploadTake, stripUrl, waitForUploads } from '../api.js';
+import { editTake, getPlanTakes, getReel, keepTake, makeReel, posterUrl, reuploadTake, savePost, stripUrl, waitForUploads } from '../api.js';
 import { Paywall, useBilling } from './Plan.jsx';
 import Glyph from '../ui/Glyph.jsx';
 import { BackBar, Poster, Switch, formatTime } from '../ui/parts.jsx';
 import Player from '../ui/Player.jsx';
+import { captionLines, editLine } from '../captions.js';
 
 const secs = (n) => `${Math.max(0, n).toFixed(1)}s`;
 const stamp = (n) => `${Math.floor(n / 60)}:${(n % 60).toFixed(1).padStart(4, '0')}`;
@@ -13,7 +14,7 @@ const stamp = (n) => `${Math.floor(n / 60)}:${(n % 60).toFixed(1).padStart(4, '0
  * takes and fix caption words; then make the reel and post it. A finished reel
  * stays here, next to its shots, until a shot changes.
  */
-export default function Reel({ planId, shots, kept, caption = '', onKeptChange, onBack, onDone, onReshoot, onMissing }) {
+export default function Reel({ planId, shots, kept, postCaption = '', hashtags = [], onPostChange, onKeptChange, onBack, onDone, onReshoot, onMissing }) {
   const [order, setOrder] = useState(() => shots.map((_, i) => i));
   const [captions, setCaptions] = useState(true);
   const [phase, setPhase] = useState('review'); // review | edit | making | done | error
@@ -50,6 +51,12 @@ export default function Reel({ planId, shots, kept, caption = '', onKeptChange, 
       })
       .catch(() => setTakes([]));
   }, [planId]);
+
+  // Each view (shots, one shot, making, finished) opens at its top; the screen scrolls itself, not the page.
+  const screenRef = useRef(null);
+  useEffect(() => {
+    if (screenRef.current) screenRef.current.scrollTop = 0;
+  }, [phase]);
 
   const takeInfo = (id) => takes?.find((t) => t.id === id) ?? null;
   const lengthOf = (i) => {
@@ -116,7 +123,7 @@ export default function Reel({ planId, shots, kept, caption = '', onKeptChange, 
   const firstPoster = posterUrl(kept[order[0]].takeId);
 
   return (
-    <div className="reel-screen studio">
+    <div className="reel-screen studio" ref={screenRef}>
       {phase === 'review' && (
         <main className="screen with-bar">
           <BackBar onBack={onBack} title="Your reel" label="Back to the camera" />
@@ -261,7 +268,17 @@ export default function Reel({ planId, shots, kept, caption = '', onKeptChange, 
       )}
 
       {phase === 'done' && reel && (
-        <Finished reel={reel} captions={reel.captions ?? captions} caption={caption} onEdit={() => setPhase('review')} onDone={onDone} />
+        <Finished
+          reel={reel}
+          poster={firstPoster}
+          captions={reel.captions ?? captions}
+          planId={planId}
+          postCaption={postCaption}
+          hashtags={hashtags}
+          onPostChange={onPostChange}
+          onEdit={() => setPhase('review')}
+          onDone={onDone}
+        />
       )}
 
       {paywall && <Paywall billing={billing} reason={billing && billing.plan !== 'pro' && billing.reelsThisMonth >= billing.reelsPerMonth ? 'limit' : 'upgrade'} posterSrc={firstPoster} onClose={() => setPaywall(false)} />}
@@ -336,7 +353,7 @@ function ShotOrder({ order, onOrder, renderRow }) {
   );
 }
 
-/** One shot: trim the take, switch to another take, fix caption words. */
+/** One shot: trim the take, switch to another take, fix its caption lines. */
 function ShotEditor({ shot, index, takes, keptTake, onSaved, onBack, onReshoot }) {
   const usable = takes.filter((t) => t.available);
   const [takeId, setTakeId] = useState(keptTake.takeId);
@@ -346,7 +363,6 @@ function ShotEditor({ shot, index, takes, keptTake, onSaved, onBack, onReshoot }
   const [edits, setEdits] = useState(take?.captionEdits ?? {});
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [wordAt, setWordAt] = useState(null); // index being typed into
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const videoRef = useRef(null);
@@ -356,15 +372,14 @@ function ShotEditor({ shot, index, takes, keptTake, onSaved, onBack, onReshoot }
     if (!take) return;
     setTrim(take.trim);
     setEdits(take.captionEdits ?? {});
-    setWordAt(null);
   }, [takeId]);
 
   const src = takeId === keptTake.takeId && keptTake.blob ? keptTake.url : `/api/takes/${takeId}/file`;
   const words = take?.words ?? [];
-  const shown = (w, i) => (Object.hasOwn(edits, i) ? edits[i] : w.text);
-  const included = (w, i) => (Object.hasOwn(edits, i) ? edits[i] !== '' : !w.filler);
-  const live = words.findIndex((w) => w.start <= time && time < w.end + 0.3);
-  const liveCaption = live >= 0 && included(words[live], live) ? shown(words[live], live) : '';
+  // The same lines the reel will show, so the preview matches it.
+  const lines = useMemo(() => captionLines(words, edits, trim), [words, edits, trim]);
+  const liveCaption = lines.find((l) => l.start <= time && time < l.end)?.text ?? '';
+  const dropped = words.filter((w, i) => w.filler && !Object.hasOwn(edits, i)).length;
 
   function onTime() {
     const v = videoRef.current;
@@ -460,41 +475,29 @@ function ShotEditor({ shot, index, takes, keptTake, onSaved, onBack, onReshoot }
                 <h3 className="row" style={{ gap: 8 }}>
                   <Glyph name="captions" size={22} /> Captions
                 </h3>
-                <span className="small muted">Tap a word to fix it</span>
-              </div>
-              <div className="word-chips">
-                {words.map((w, i) =>
-                  wordAt === i ? (
-                    <input
-                      key={i}
-                      autoFocus
-                      defaultValue={shown(w, i)}
-                      aria-label={`Fix “${w.text}”. Leave empty to drop it.`}
-                      onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-                      onBlur={(e) => {
-                        const value = e.currentTarget.value.trim();
-                        setEdits((current) => {
-                          const next = { ...current };
-                          if (value === w.text && !w.filler) delete next[i];
-                          else next[i] = value;
-                          return next;
-                        });
-                        setWordAt(null);
-                      }}
-                    />
-                  ) : (
-                    <button
-                      key={i}
-                      className={!included(w, i) ? 'filler' : Object.hasOwn(edits, i) ? 'edited' : ''}
-                      onClick={() => setWordAt(i)}
-                      title={!included(w, i) ? 'Left out of the captions' : undefined}
-                    >
-                      {shown(w, i) || w.text}
-                    </button>
-                  ),
+                {Object.keys(edits).length > 0 && (
+                  <button className="link strong" style={{ minHeight: 0, padding: 0 }} onClick={() => setEdits({})}>
+                    Undo my fixes
+                  </button>
                 )}
               </div>
-              <p className="tiny muted">Dashed words are left out of the captions. Clear a word to drop it.</p>
+              <div className="caption-lines">
+                {lines.map((line) => (
+                  <CaptionLine
+                    key={`${line.indices[0]}|${line.text}`}
+                    line={line}
+                    live={line.start <= time && time < line.end}
+                    onChange={(value) => setEdits((current) => editLine(words, current, line.indices, value))}
+                    onSeek={() => {
+                      if (videoRef.current) videoRef.current.currentTime = Math.max(trim.start, line.start);
+                    }}
+                  />
+                ))}
+              </div>
+              <p className="tiny muted">
+                Tap a line to fix it, exactly as it appears in the reel. Clear a line to drop it.
+                {dropped > 0 && ` ${dropped} filler ${dropped === 1 ? 'word (“umm”) is' : 'words (“umm”) are'} left out.`}
+              </p>
             </section>
           )}
           {error && <p className="error">{error}</p>}
@@ -509,6 +512,43 @@ function ShotEditor({ shot, index, takes, keptTake, onSaved, onBack, onReshoot }
         </button>
       </div>
     </main>
+  );
+}
+
+/** One caption line as it reads in the reel; tap to retype it. */
+function CaptionLine({ line, live, onChange, onSeek }) {
+  const [editing, setEditing] = useState(false);
+  if (editing) {
+    return (
+      <textarea
+        className="caption-line editing"
+        autoFocus
+        rows={1}
+        defaultValue={line.text}
+        aria-label={`Fix the caption “${line.text}”. Leave it empty to drop it.`}
+        onFocus={(e) => e.currentTarget.select()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.preventDefault(), e.currentTarget.blur());
+          if (e.key === 'Escape') setEditing(false);
+        }}
+        onBlur={(e) => {
+          if (e.currentTarget.value.trim() !== line.text) onChange(e.currentTarget.value);
+          setEditing(false);
+        }}
+      />
+    );
+  }
+  return (
+    <button
+      className={`caption-line ${live ? 'live' : ''}`}
+      onClick={() => {
+        onSeek();
+        setEditing(true);
+      }}
+    >
+      <span>{line.text}</span>
+      <Glyph name="edit" size={16} />
+    </button>
   );
 }
 
@@ -607,18 +647,14 @@ function Making({ status, captions, shots, title, failed, onRetry, onWithoutCapt
   );
 }
 
-const TARGETS = [
-  { id: 'instagram', label: 'Instagram Reels' },
-  { id: 'whatsapp', label: 'WhatsApp Status' },
-  { id: 'youtube', label: 'YouTube Shorts' },
-];
+// What Share sends along with the video.
+const shareText = () => `I shot this on Darpan, try it now: ${window.location.origin}`;
 
-/** The finished reel: where to post it, with the caption already copied. */
-function Finished({ reel, captions, caption, onEdit, onDone }) {
+/** The finished reel: save it or share it, with the post's caption and hashtags to edit and copy. */
+function Finished({ reel, poster, captions, planId, postCaption, hashtags, onPostChange, onEdit, onDone }) {
   const src = `/api/reels/${reel.id}/file`;
   const [file, setFile] = useState(null);
   const [message, setMessage] = useState('');
-  const [copied, setCopied] = useState(false);
 
   // Have the file ready so Share opens instantly (browsers only allow the share
   // sheet right after a tap). Fetched a few seconds in, so the video starts
@@ -638,64 +674,57 @@ function Finished({ reel, captions, caption, onEdit, onDone }) {
     };
   }, [src, reel.id]);
 
-  const canShare = Boolean(file && navigator.canShare?.({ files: [file] }));
-  const meta = useMemo(
-    () =>
-      [
-        reel.durationSeconds && formatTime(reel.durationSeconds),
-        reel.width && `${reel.width} × ${reel.height}`,
-        captions && 'captions',
-        copied && 'caption copied',
-      ]
-        .filter(Boolean)
-        .join(' · '),
-    [reel, captions, copied],
-  );
+  const facts = [
+    reel.durationSeconds && formatTime(reel.durationSeconds),
+    reel.height && `${Math.min(reel.width, reel.height)}p`,
+    captions && 'Captions',
+  ].filter(Boolean);
+  // Phones that can share files wait for the video; elsewhere Share sends the text alone.
+  const sharesFiles = Boolean(navigator.canShare);
 
-  async function share(target) {
+  async function share() {
     setMessage('');
-    if (caption) {
-      await navigator.clipboard
-        ?.writeText(caption)
-        .then(() => setCopied(true))
-        .catch(() => {});
-    }
-    if (!canShare) {
-      setMessage(`This browser can’t send videos straight to ${target.label}. Save it to your phone, then post it from your gallery.`);
-      return;
-    }
+    const text = shareText();
     try {
-      await navigator.share({ files: [file], title: 'My reel', text: caption || undefined });
+      if (file && navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], text });
+      else if (navigator.share) await navigator.share({ text });
+      else {
+        await navigator.clipboard.writeText(text);
+        setMessage('Link copied. Save the reel to your phone to post the video.');
+      }
     } catch (err) {
       if (err.name !== 'AbortError') setMessage('Couldn’t open sharing. Save it to your phone instead.');
     }
   }
 
   return (
-    <main className="with-bar" style={{ paddingBottom: 'calc(var(--bar-h) + var(--safe-b) + 24px)' }}>
-      <div className="final-media">
-        <Player src={src} autoPlay loop />
-        <div className="over">
-          <button className="cam-btn" onClick={onEdit} aria-label="Back to your reel and its shots">
-            <Glyph name="back" size={22} />
-          </button>
+    <main className="final with-bar">
+      <div className="final-stage">
+        <div className="final-video">
+          <Player src={src} poster={poster} autoPlay loop fit="cover" />
         </div>
+        <button className="cam-btn final-back" onClick={onEdit} aria-label="Back to your reel and its shots">
+          <Glyph name="back" size={22} />
+        </button>
       </div>
-      <div className="review-body">
-        <div className="stack tight">
+
+      <div className="final-body">
+        <div className="final-head">
+          <span className="ready-badge">
+            <Glyph name="check" size={16} /> Ready to post
+          </span>
           <h1>Your reel is ready</h1>
-          <p className="small muted">{meta}</p>
+          {facts.length > 0 && (
+            <ul className="facts" aria-label="About this reel">
+              {facts.map((f) => (
+                <li key={f}>{f}</li>
+              ))}
+            </ul>
+          )}
         </div>
-        <div className="targets">
-          {TARGETS.map((t) => (
-            <button key={t.id} onClick={() => share(t)} disabled={!file}>
-              <Glyph name="share" />
-              {t.label}
-            </button>
-          ))}
-        </div>
-        {!file && <p className="small muted pulse">Getting your reel ready to share…</p>}
-        {caption && <p className="tiny muted">Your caption is copied when you tap a button: paste it into the post.</p>}
+
+        <PostCard planId={planId} postCaption={postCaption} hashtags={hashtags} onPostChange={onPostChange} />
+
         {message && <p className="notice">{message}</p>}
         <div className="row between">
           <button className="link strong" onClick={onEdit}>
@@ -706,11 +735,128 @@ function Finished({ reel, captions, caption, onEdit, onDone }) {
           </button>
         </div>
       </div>
+
       <div className="action-bar">
+        <button className="secondary" onClick={share} disabled={sharesFiles && !file}>
+          {sharesFiles && !file ? 'Getting ready…' : 'Share'} <Glyph name="share" size={20} />
+        </button>
         <a className="button primary" href={`${src}?download=1`} download={`darpan-reel-${reel.id}.mp4`}>
-          Save to my phone <Glyph name="save" size={20} />
+          Save to phone <Glyph name="save" size={20} />
         </a>
       </div>
     </main>
+  );
+}
+
+// Letters (with Devanagari vowel signs), digits and underscores, as Instagram allows.
+const cleanTag = (value) => value.replace(/^#+/, '').replace(/[^\p{L}\p{M}\p{N}_]/gu, '');
+
+/** The post's caption and hashtags: edit them here, then copy them into Instagram. */
+function PostCard({ planId, postCaption, hashtags, onPostChange }) {
+  const [caption, setCaption] = useState(postCaption);
+  const [tags, setTags] = useState(() => (hashtags ?? []).map((t) => `#${cleanTag(t)}`).filter((t) => t.length > 1));
+  const [draft, setDraft] = useState('');
+  const [state, setState] = useState(''); // '' | saving | saved | copied | error
+  const saved = useRef({ caption: postCaption, tags: tags.join(' ') });
+  const queue = useRef(Promise.resolve()); // one save at a time, so an older one never lands last
+
+  function save(next = {}) {
+    const post = { caption: next.caption ?? caption, hashtags: next.tags ?? tags };
+    onPostChange?.(post);
+    if (!planId) return;
+    queue.current = queue.current.then(async () => {
+      if (post.caption === saved.current.caption && post.hashtags.join(' ') === saved.current.tags) return;
+      setState('saving');
+      try {
+        const result = await savePost(planId, post);
+        saved.current = { caption: result.caption, tags: result.hashtags.join(' ') };
+        setState('saved');
+      } catch {
+        setState('error');
+      }
+    });
+  }
+
+  // Adds what was typed or pasted: several hashtags at once when separated by spaces or commas.
+  function addTag(value) {
+    setDraft('');
+    const next = [...tags];
+    for (const word of value.split(/[\s,]+/)) {
+      const tag = cleanTag(word);
+      if (tag && !next.some((t) => t.toLowerCase() === `#${tag}`.toLowerCase())) next.push(`#${tag}`);
+    }
+    if (next.length === tags.length) return;
+    setTags(next);
+    save({ tags: next });
+  }
+
+  function removeTag(tag) {
+    const next = tags.filter((t) => t !== tag);
+    setTags(next);
+    save({ tags: next });
+  }
+
+  async function copy() {
+    const text = [caption.trim(), tags.join(' ')].filter(Boolean).join('\n\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      setState('copied');
+    } catch {
+      setState('error');
+    }
+  }
+
+  const status = {
+    saving: 'Saving…',
+    saved: 'Saved',
+    copied: 'Copied. Paste it when you post',
+    error: 'Couldn’t do that. Check your connection and try again',
+  }[state];
+  return (
+    <section className="post-card" aria-label="Caption and hashtags">
+      <div className="row between">
+        <h3>Caption</h3>
+        <button className="copy-btn" onClick={copy}>
+          <Glyph name={state === 'copied' ? 'check' : 'copy'} size={18} /> {state === 'copied' ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <textarea
+        value={caption}
+        onChange={(e) => {
+          setCaption(e.target.value);
+          setState('');
+        }}
+        onBlur={() => save()}
+        placeholder="Write what goes under your reel"
+        maxLength={2200}
+        rows={3}
+        aria-label="Caption"
+      />
+      <div className="tags" role="list" aria-label="Hashtags">
+        {tags.map((t) => (
+          <span key={t} className="tag-chip" role="listitem">
+            {t}
+            <button onClick={() => removeTag(t)} aria-label={`Remove ${t}`}>
+              <Glyph name="x" size={14} />
+            </button>
+          </span>
+        ))}
+        <input
+          value={draft}
+          onChange={(e) => (/[\s,]$/.test(e.target.value) ? addTag(e.target.value) : setDraft(e.target.value))}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') (e.preventDefault(), addTag(draft));
+            if (e.key === 'Backspace' && !draft && tags.length) removeTag(tags.at(-1));
+          }}
+          onBlur={() => draft && addTag(draft)}
+          placeholder={tags.length ? '#add' : '#add a hashtag'}
+          aria-label="Add a hashtag"
+          enterKeyHint="done"
+        />
+      </div>
+      <p className="tiny muted" aria-live="polite">
+        {status ?? 'Copy it, then paste it when you post on Instagram or Shorts.'}
+      </p>
+    </section>
   );
 }

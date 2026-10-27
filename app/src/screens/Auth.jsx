@@ -9,44 +9,40 @@ const GENDERS = [
   { value: 'prefer_not_to_say', label: 'Prefer not to say' },
 ];
 const NICHES = ['Food', 'Fitness', 'Comedy', 'Beauty', 'Tech', 'Money', 'Travel', 'Fashion', 'Education'];
-const OTHER = 'Something else';
 
-/** "Food: budget street food in Indore" gives the script writer far more to go on than "Food". */
-export const joinNiche = (niche, detail) => (niche === OTHER ? detail.trim() : [niche, detail.trim()].filter(Boolean).join(': '));
-
-/** The other way round, for editing a saved niche: "Food: street food" -> ["Food", "street food"]. */
-export function splitNiche(full = '') {
-  const [head, ...rest] = full.split(':');
-  const match = NICHES.find((n) => n.toLowerCase() === head.trim().toLowerCase());
-  return match ? [match, rest.join(':').trim()] : full.trim() ? [OTHER, full.trim()] : ['', ''];
-}
-
-/** The niche chips plus an optional "be specific" line, used at sign-up and in Account. */
-export function NicheFields({ niche, detail, onNiche, onDetail }) {
+/**
+ * What the creator makes reels about, in their own words ("Trading", "budget
+ * street food in Indore"): what they type is their niche. The chips only fill
+ * the box, so a tapped chip can never override what they wrote.
+ */
+export function NicheFields({ value, onChange }) {
+  const picked = (n) => value.trim().toLowerCase() === n.toLowerCase();
   return (
-    <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0 }}>
-      <legend className="small" style={{ fontWeight: 600, marginBottom: 8 }}>What do you make reels about?</legend>
-      <div className="chips">
-        {[...NICHES, OTHER].map((n) => (
-          <label key={n} className="chip">
-            <input type="radio" name="niche" value={n} checked={niche === n} onChange={() => onNiche(n)} required />
+    <div className="stack" style={{ gap: 'var(--space-3)' }}>
+      <label className="small" style={{ fontWeight: 600 }} htmlFor="niche">
+        What do you make reels about?
+      </label>
+      <input
+        id="niche"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="e.g. Trading, home workouts, Marathi comedy"
+        maxLength={200}
+        autoComplete="off"
+        autoCapitalize="sentences"
+        required
+      />
+      <div className="chips" role="group" aria-label="Or pick one">
+        {NICHES.map((n) => (
+          <button key={n} type="button" className={`chip ${picked(n) ? 'selected' : ''}`} aria-pressed={picked(n)} onClick={() => onChange(n)}>
             {n}
-          </label>
+          </button>
         ))}
       </div>
-      {niche && (
-        <input
-          value={detail}
-          onChange={(e) => onDetail(e.target.value)}
-          placeholder={niche === OTHER ? 'e.g. Marathi comedy, gardening in Delhi' : 'Be specific (optional), e.g. budget street food in Indore'}
-          maxLength={160}
-          aria-label="Your niche in a few words"
-          required={niche === OTHER}
-        />
-      )}
-    </fieldset>
+    </div>
   );
 }
+
 const USERNAME = /^[a-z0-9._]{3,20}$/;
 
 export default function Auth({ initialMode = 'signup', onSignedIn, onExit }) {
@@ -73,7 +69,6 @@ function SignUp({ onSignedIn, onBack, onLogIn }) {
   const [name, setName] = useState('');
   const [gender, setGender] = useState('');
   const [niche, setNiche] = useState('');
-  const [nicheDetail, setNicheDetail] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [username, setUsername] = useState('');
   const [taken, setTaken] = useState('');
@@ -82,7 +77,7 @@ function SignUp({ onSignedIn, onBack, onLogIn }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  const fullNiche = joinNiche(niche, nicheDetail);
+  const fullNiche = niche.trim();
 
   async function loadSuggestions() {
     const { suggestions } = await suggestUsernames(name);
@@ -169,7 +164,7 @@ function SignUp({ onSignedIn, onBack, onLogIn }) {
             </div>
             <p className="hint">Hindi lines use the right verb: “main karti hoon” or “main karta hoon”.</p>
           </fieldset>
-          <NicheFields niche={niche} detail={nicheDetail} onNiche={setNiche} onDetail={setNicheDetail} />
+          <NicheFields value={niche} onChange={setNiche} />
           {error && <p className="error">{error}</p>}
           <p className="small muted">
             Already have an account?{' '}

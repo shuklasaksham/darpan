@@ -152,25 +152,59 @@ export function captionChunks(words, spelled, trim, edits = null, language = 'Hi
     .map((w, i) => ({ ...w, caption: (edited(i) ? String(edits[i]) : (spelled?.[i] ?? captionWord(w.text, language))).trim() }))
     .filter((w, i) => (edited(i) || !skip.has(i)) && w.caption && w.end > trim.start && w.start < trim.end);
 
-  const chunks = [];
-  let current = [];
-  kept.forEach((w, i) => {
-    current.push(w);
-    const next = kept[i + 1];
-    const chars = current.reduce((n, x) => n + x.caption.length + 1, 0);
-    const breakHere =
-      !next || current.length >= 4 || chars > 22 || /[.!?।,]$/.test(w.caption) || next.start - w.end > 0.45;
-    if (breakHere) {
-      chunks.push(current);
-      current = [];
-    }
-  });
+  const chunks = groupCaptionWords(kept);
   return chunks.map((c, i) => {
     const next = chunks[i + 1];
     const start = Math.max(0, c[0].start - trim.start);
     const end = Math.min(trim.end - trim.start, next ? next[0].start - trim.start : c[c.length - 1].end - trim.start + 0.5);
     return { start, end: Math.max(end, start + 0.3), text: c.map((w) => w.caption).join(' ') };
   });
+}
+
+// Caption lines are grouped the same way in the reel editor (app/src/captions.js): keep the two in step.
+const MAX_WORDS = 5;
+const MAX_CHARS = 26;
+const MERGE_CHARS = 38; // a lone word may make a line wrap to two
+const PAUSE = 0.7; // seconds of silence that start a new line
+
+/**
+ * Groups timed words ({ caption, start, end }) into short lines: a line ends at
+ * a full stop, a pause, or when it's full; a lone word joins a neighbour so
+ * captions never flash one word at a time.
+ */
+function groupCaptionWords(words) {
+  const lines = [];
+  let current = [];
+  const chars = (list) => list.reduce((n, w) => n + w.caption.length + 1, 0);
+  words.forEach((w, i) => {
+    current.push(w);
+    const next = words[i + 1];
+    const breakHere =
+      !next ||
+      current.length >= MAX_WORDS ||
+      chars(current) >= MAX_CHARS ||
+      /[.!?।]$/.test(w.caption) ||
+      (/,$/.test(w.caption) && current.length >= 3) ||
+      next.start - w.end > PAUSE;
+    if (breakHere) {
+      lines.push(current);
+      current = [];
+    }
+  });
+  for (let i = 0; i < lines.length; i++) {
+    if (lines.length < 2 || lines[i].length !== 1) continue;
+    const prev = lines[i - 1];
+    const next = lines[i + 1];
+    const word = lines[i][0];
+    if (prev && !/[.!?।]$/.test(prev.at(-1).caption) && chars(prev) + word.caption.length <= MERGE_CHARS && word.start - prev.at(-1).end <= PAUSE * 2) {
+      prev.push(word);
+    } else if (next && chars(next) + word.caption.length <= MERGE_CHARS && next[0].start - word.end <= PAUSE * 2) {
+      next.unshift(word);
+    } else continue;
+    lines.splice(i, 1);
+    i--;
+  }
+  return lines;
 }
 
 // How everyday Hindi words are usually typed in Hinglish; the letter-by-letter

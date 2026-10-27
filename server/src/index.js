@@ -197,6 +197,25 @@ app.get('/api/recent', requireUser, async (req, res, next) => {
 });
 
 // Save the creator's edits to a script before shooting.
+// The post's caption and hashtags, edited on the finished reel.
+app.patch('/api/plans/:id/post', requireUser, async (req, res, next) => {
+  if (!pool) return res.status(503).json({ error: 'Saving needs a database' });
+  const caption = typeof req.body?.caption === 'string' ? req.body.caption.trim().slice(0, 2200) : null;
+  const hashtags = Array.isArray(req.body?.hashtags)
+    ? [...new Set(req.body.hashtags.map((t) => `#${String(t).replace(/^#+/, '').replace(/[^\p{L}\p{M}\p{N}_]/gu, '')}`).filter((t) => t.length > 1))].slice(0, 30)
+    : null;
+  if (caption === null && hashtags === null) return res.status(400).json({ error: 'Send a caption or hashtags' });
+  try {
+    const plan = await loadPlan(req.params.id, req.user.id);
+    if (!plan) return res.status(404).json({ error: 'Script not found' });
+    const updated = { ...plan, ...(caption !== null && { caption }), ...(hashtags !== null && { hashtags }) };
+    await pool.query('UPDATE shoot_plans SET plan = $3 WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id, updated]);
+    res.json({ caption: updated.caption ?? '', hashtags: updated.hashtags ?? [] });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.put('/api/plans/:id', requireUser, async (req, res, next) => {
   const shots = req.body?.script?.shots;
   if (!pool) return res.status(503).json({ error: 'Saving scripts needs a database' });
@@ -559,7 +578,7 @@ app.patch('/api/takes/:id', requireUser, async (req, res, next) => {
       edits = {};
       for (const [k, v] of Object.entries(body.captionEdits ?? {})) {
         const i = Number(k);
-        if (Number.isInteger(i) && i >= 0 && i < count && typeof v === 'string') edits[i] = v.trim().slice(0, 40);
+        if (Number.isInteger(i) && i >= 0 && i < count && typeof v === 'string') edits[i] = v.trim().slice(0, 120); // a retyped line can land on one word
       }
     }
     const { rows: [updated] } = await pool.query(
