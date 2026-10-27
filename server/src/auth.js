@@ -99,6 +99,18 @@ authRouter.use(requireDb);
 
 authRouter.get('/me', (req, res) => res.json({ user: req.user ?? null }));
 
+// Change what the creator makes reels about (scripts and trend cards follow it).
+authRouter.patch('/me', requireUser, async (req, res, next) => {
+  const niche = cleanText(req.body?.niche, 200);
+  if (!niche) return res.status(400).json({ error: 'Tell us your niche' });
+  try {
+    const { rows } = await pool.query('UPDATE users SET niche = $2 WHERE id = $1 RETURNING *', [req.user.id, niche]);
+    res.json({ user: publicUser(rows[0]) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 authRouter.post('/username-suggestions', limits.usernames, async (req, res, next) => {
   const name = cleanText(req.body?.name, 60);
   if (!name) return res.status(400).json({ error: 'Tell us your name first' });

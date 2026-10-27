@@ -5,13 +5,15 @@ import { LANGUAGE_OPTIONS, savedLanguage, saveLanguage } from './Home.jsx';
 import Picker from '../ui/Picker.jsx';
 import { Paywall, useBilling } from './Plan.jsx';
 import { shootProgress } from './Recent.jsx';
-import { posterUrl } from '../api.js';
+import { posterUrl, updateNiche } from '../api.js';
+import { NicheFields, joinNiche, splitNiche } from './Auth.jsx';
 
-export default function Account({ user, shoots, onLogOut }) {
+export default function Account({ user, shoots, onLogOut, onUserChange }) {
   const [billing] = useBilling();
   const [language, setLanguage] = useState(savedLanguage);
   const [voiceTips, setVoiceTips] = useState(() => readPref('voiceTips', true));
   const [paywall, setPaywall] = useState(false);
+  const [editingNiche, setEditingNiche] = useState(false);
   const niche = user.niche?.split(':')[0];
   const pro = billing?.plan === 'pro';
   const used = billing?.reelsThisMonth ?? 0;
@@ -61,6 +63,15 @@ export default function Account({ user, shoots, onLogOut }) {
 
       <ul className="list">
         <li>
+          <button className="list-row" onClick={() => setEditingNiche(true)}>
+            Your niche
+            <span className="value" style={{ minWidth: 0 }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{niche || 'Not set'}</span>
+              <Glyph name="chevron" size={18} />
+            </span>
+          </button>
+        </li>
+        <li>
           <div className="list-row" style={{ cursor: 'default' }}>
             Script language
             <Picker
@@ -108,7 +119,57 @@ export default function Account({ user, shoots, onLogOut }) {
         Log out
       </button>
 
+      {editingNiche && (
+        <NicheSheet
+          current={user.niche}
+          onClose={() => setEditingNiche(false)}
+          onSaved={(u) => {
+            onUserChange(u);
+            setEditingNiche(false);
+          }}
+        />
+      )}
       {paywall && <Paywall billing={billing} posterSrc={posterTake ? posterUrl(posterTake) : null} onClose={() => setPaywall(false)} />}
     </main>
+  );
+}
+
+function NicheSheet({ current, onSaved, onClose }) {
+  const [initialNiche, initialDetail] = splitNiche(current);
+  const [niche, setNiche] = useState(initialNiche);
+  const [detail, setDetail] = useState(initialDetail);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const full = joinNiche(niche, detail);
+
+  async function save(e) {
+    e.preventDefault();
+    if (full === current) return onClose();
+    setBusy(true);
+    setError('');
+    try {
+      const { user } = await updateNiche(full);
+      onSaved(user);
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label="Change your niche" onClick={onClose}>
+      <form className="sheet" onClick={(e) => e.stopPropagation()} onSubmit={save}>
+        <h2>Your niche</h2>
+        <p className="muted">Scripts and trending ideas follow this.</p>
+        <NicheFields niche={niche} detail={detail} onNiche={setNiche} onDetail={setDetail} />
+        {error && <p className="error">{error}</p>}
+        <button className="primary block" disabled={busy || !full}>
+          {busy ? 'Saving…' : 'Save'}
+        </button>
+        <button type="button" className="link" onClick={onClose}>
+          Cancel
+        </button>
+      </form>
+    </div>
   );
 }

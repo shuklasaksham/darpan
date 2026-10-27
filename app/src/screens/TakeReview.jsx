@@ -6,6 +6,7 @@ const BREAKDOWN = [
   ['hook', 'Hook'],
   ['voice', 'Voice'],
   ['eye', 'Eye contact'],
+  ['scene', 'Scene'],
 ];
 
 /**

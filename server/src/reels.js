@@ -22,12 +22,13 @@ export const reelsDir = path.join(config.uploadDir, 'reels');
 fs.mkdirSync(takesDir, { recursive: true });
 fs.mkdirSync(reelsDir, { recursive: true });
 
-const FONT_DIR = '/usr/share/fonts/truetype/dejavu';
-const FONT = 'DejaVu Sans';
+// Mukta (the app's own type) has Latin and Devanagari, so Hindi captions render too.
+const FONT_DIR = path.join(import.meta.dirname, '..', 'fonts');
+const FONT = 'Mukta';
 const LEAD_IN = 0.15; // seconds kept before the first word
 const TAIL = 0.4; // and after the last, so nothing sounds clipped
 const FPS = 30;
-const PIECE_VERSION = 2; // bump when the encode settings change, so old pieces aren't reused
+const PIECE_VERSION = 3; // bump when the encode settings change, so old pieces aren't reused
 
 // x264 "veryfast" at CRF 21 looks close to the phone's own recording; the
 // maxrate keeps files small enough to download quickly on mobile data.
@@ -139,16 +140,16 @@ export function reelSize(aspect, maxLongEdge = 1920) {
 }
 
 /**
- * Caption lines for one take: filler words dropped, Devanagari turned into
- * Roman Hinglish, grouped into short chunks timed to the speech. `edits` holds
+ * Caption lines for one take: filler words dropped, spelled for the script's
+ * language (see captionWord), grouped into short chunks timed to the speech. `edits` holds
  * the creator's fixes by word index; an empty string drops the word, and an
  * edited filler is kept.
  */
-export function captionChunks(words, hinglish, trim, edits = null) {
+export function captionChunks(words, spelled, trim, edits = null, language = 'Hinglish') {
   const skip = new Set(findFillers(words).flatMap((f) => f.indices));
   const edited = (i) => edits && Object.hasOwn(edits, i);
   const kept = words
-    .map((w, i) => ({ ...w, caption: (edited(i) ? String(edits[i]) : (hinglish?.[i] ?? toHinglish(w.text))).trim() }))
+    .map((w, i) => ({ ...w, caption: (edited(i) ? String(edits[i]) : (spelled?.[i] ?? captionWord(w.text, language))).trim() }))
     .filter((w, i) => (edited(i) || !skip.has(i)) && w.caption && w.end > trim.start && w.start < trim.end);
 
   const chunks = [];
@@ -185,6 +186,12 @@ const COMMON = Object.fromEntries(Object.entries({
   'रुपए': 'rupaye', 'चलो': 'chalo', 'चलिए': 'chaliye', 'देखो': 'dekho', 'देखिए': 'dekhiye', 'मेरा': 'mera',
   'मेरी': 'meri', 'मेरे': 'mere', 'आपका': 'aapka', 'आपकी': 'aapki', 'सिर्फ़': 'sirf', 'सिर्फ': 'sirf',
 }).map(([k, v]) => [k.normalize('NFC'), v]));
+
+/**
+ * A transcript word as a caption, before (or without) Claude's spelling: Hindi
+ * scripts keep what was heard, Hinglish and English ones are written in Roman letters.
+ */
+export const captionWord = (text, language) => (language === 'Hindi' ? text : toHinglish(text));
 
 /** Roman-script Hinglish for a word that may be in Devanagari. */
 export function toHinglish(text) {
@@ -290,7 +297,7 @@ const inflight = new Map(); // piece path -> { task, listeners }
 /** Everything that changes how a take's piece looks, and the cache file for it. */
 function pieceFor(take, { captions, tag, size }) {
   const trim = trimFor(take);
-  const chunks = captions ? captionChunks(take.words ?? [], take.caption_words ?? null, trim, take.caption_edits) : [];
+  const chunks = captions ? captionChunks(take.words ?? [], take.caption_words ?? null, trim, take.caption_edits, take.language ?? 'Hinglish') : [];
   const key = createHash('sha1')
     .update(JSON.stringify({ v: PIECE_VERSION, trim, chunks, tag, size, preset: PRESET }))
     .digest('hex')

@@ -27,6 +27,8 @@ export const suggestUsernames = (name) => postJson('/api/auth/username-suggestio
 export const signUp = (details) => postJson('/api/auth/signup', details);
 export const logIn = (username, pin) => postJson('/api/auth/login', { username, pin });
 export const logOut = () => postJson('/api/auth/logout', {});
+export const updateNiche = (niche) =>
+  request('/api/auth/me', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ niche }) });
 
 export const getTrends = (language) => request(`/api/trends?language=${encodeURIComponent(language)}`);
 export const writeScript = (brief) => postJson('/api/script', brief);

@@ -19,7 +19,7 @@ const PRO = ['Unlimited reels for 30 days', 'Everything in Free', 'Full HD 1080p
 const HOW = [
   ['Say your idea', "Type it or say it in Hinglish. Darpan writes a short script for your niche and what's trending."],
   ['Shoot with a coach', 'A teleprompter that follows your voice, a frame guide, and spoken tips on light and framing.'],
-  ['Post your reel', 'Trimmed to your words, captioned in Hinglish, and ready for Instagram, Shorts or WhatsApp.'],
+  ['Post your reel', 'Trimmed to your words, captioned in Hinglish, Hindi or English, and ready for Instagram, Shorts or WhatsApp.'],
 ];
 
 export default function Landing({ onSignUp, onLogIn }) {

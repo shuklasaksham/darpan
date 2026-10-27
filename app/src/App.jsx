@@ -157,7 +157,7 @@ function CreatorApp() {
         <Home user={user} health={health} shoots={shoots} onShoot={setShoot} onResume={resume} onAccount={() => setTab('account')} />
       )}
       {tab === 'recent' && <RecentReels shoots={shoots} onResume={resume} onStart={() => setTab('home')} />}
-      {tab === 'account' && <Account user={user} shoots={shoots} onLogOut={onLogOut} />}
+      {tab === 'account' && <Account user={user} shoots={shoots} onLogOut={onLogOut} onUserChange={setUser} />}
       <TabBar tab={tab} onTab={setTab} />
     </>
   );
