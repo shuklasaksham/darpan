@@ -68,7 +68,6 @@ export async function migrate() {
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS aspect REAL;
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS caption_words JSONB;
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS language TEXT;
-    ALTER TABLE takes ADD COLUMN IF NOT EXISTS light JSONB;
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,
       value JSONB NOT NULL

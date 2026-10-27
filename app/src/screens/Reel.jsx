@@ -5,7 +5,6 @@ import Glyph from '../ui/Glyph.jsx';
 import { BackBar, Poster, Switch, formatTime } from '../ui/parts.jsx';
 import Player from '../ui/Player.jsx';
 import { captionLines, editLine } from '../captions.js';
-import { glowStyle, suggestLight } from '../camera/light.js';
 
 const secs = (n) => `${Math.max(0, n).toFixed(1)}s`;
 const stamp = (n) => `${Math.floor(n / 60)}:${(n % 60).toFixed(1).padStart(4, '0')}`;
@@ -399,9 +398,6 @@ function ShotEditor({ shot, index, hook, takes, keptTake, onSaved, onBack, onRes
   const duration = take?.durationSeconds || 0;
   const [trim, setTrim] = useState(take?.trim ?? { start: 0, end: duration });
   const [edits, setEdits] = useState(take?.captionEdits ?? {});
-  const [light, setLight] = useState(take?.light ?? null);
-  const [before, setBefore] = useState(false); // held down to compare with the take as shot
-  const [suggesting, setSuggesting] = useState(false);
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -413,13 +409,7 @@ function ShotEditor({ shot, index, hook, takes, keptTake, onSaved, onBack, onRes
     if (!take) return;
     setTrim(take.trim);
     setEdits(take.captionEdits ?? {});
-    setLight(take.light ?? null);
   }, [takeId]);
-
-  async function addLight() {
-    setSuggesting(true);
-    setLight(await suggestLight(videoRef.current, take?.aspect).finally(() => setSuggesting(false)));
-  }
 
   const src = takeId === keptTake.takeId && keptTake.blob ? keptTake.url : `/api/takes/${takeId}/file`;
   const words = take?.words ?? [];
@@ -446,7 +436,6 @@ function ShotEditor({ shot, index, hook, takes, keptTake, onSaved, onBack, onRes
         patch.trimEnd = trim.end;
       }
       if (JSON.stringify(edits) !== JSON.stringify(take.captionEdits ?? {})) patch.captionEdits = edits;
-      if (JSON.stringify(light) !== JSON.stringify(take.light ?? null)) patch.light = light;
       const saved = Object.keys(patch).length ? (await editTake(take.id, patch)).take : take;
       const picked = take.id !== keptTake.takeId;
       if (picked) await keepTake(take.id);
@@ -477,10 +466,8 @@ function ShotEditor({ shot, index, hook, takes, keptTake, onSaved, onBack, onRes
               onPlay={() => setPlaying(true)}
               onPause={() => setPlaying(false)}
             />
-            {light && !before && <div className="light-glow" style={glowStyle(light, 300)} aria-hidden="true" />}
             {hook && time - trim.start < 2.2 && <span className="hook-cap">{hook}</span>}
             {liveCaption && <span className="cap">{liveCaption}</span>}
-            {light && !before && <LightHandle light={light} onMove={setLight} />}
             {!playing && (
               <button className="icon-btn ink play" onClick={() => videoRef.current?.play()} aria-label="Play" style={{ background: 'rgb(10 10 10 / 0.6)', color: '#fff' }}>
                 <Glyph name="play" />
@@ -503,43 +490,6 @@ function ShotEditor({ shot, index, hook, takes, keptTake, onSaved, onBack, onRes
               }} />
             </div>
           )}
-
-          <section className="stack">
-            <div className="row between">
-              <h3 className="row" style={{ gap: 8 }}>
-                <Glyph name="light" size={22} /> Light
-              </h3>
-              {light && (
-                <button className="link strong" style={{ minHeight: 0, padding: 0 }} onClick={() => setLight(null)}>
-                  Remove
-                </button>
-              )}
-            </div>
-            {!light ? (
-              <>
-                <button className="secondary" onClick={addLight} disabled={suggesting}>
-                  {suggesting ? 'Finding the best spot…' : 'Add Darpan’s light'} <Glyph name="light" size={20} />
-                </button>
-                <p className="tiny muted">Darpan puts a soft light where your face needs it. Drag the light on the video to move it.</p>
-              </>
-            ) : (
-              <>
-                <LightSlider label="Brightness" value={light.strength} onChange={(strength) => setLight({ ...light, strength })} />
-                <LightSlider label="Warmth" value={light.warmth} onChange={(warmth) => setLight({ ...light, warmth })} />
-                <button
-                  className="secondary compare"
-                  onPointerDown={() => setBefore(true)}
-                  onPointerUp={() => setBefore(false)}
-                  onPointerLeave={() => setBefore(false)}
-                  onPointerCancel={() => setBefore(false)}
-                  onKeyDown={(e) => e.key === ' ' && setBefore(true)}
-                  onKeyUp={() => setBefore(false)}
-                >
-                  {before ? 'Showing the take as shot' : 'Hold to compare'}
-                </button>
-              </>
-            )}
-          </section>
 
           {usable.length > 1 && (
             <section className="stack">
@@ -600,48 +550,6 @@ function ShotEditor({ shot, index, hook, takes, keptTake, onSaved, onBack, onRes
         </button>
       </div>
     </main>
-  );
-}
-
-/** The light on the preview: drag it (or use the arrow keys) to move it. */
-function LightHandle({ light, onMove }) {
-  const [dragging, setDragging] = useState(false);
-  const moveTo = (e) => {
-    const r = e.currentTarget.parentElement.getBoundingClientRect();
-    const unit = (n) => Math.min(0.97, Math.max(0.03, n));
-    onMove({ ...light, x: unit((e.clientX - r.left) / r.width), y: unit((e.clientY - r.top) / r.height) });
-  };
-  return (
-    <button
-      className={`light-handle ${dragging ? 'dragging' : ''}`}
-      style={{ left: `${light.x * 100}%`, top: `${light.y * 100}%` }}
-      aria-label="Move the light. Use the arrow keys."
-      onPointerDown={(e) => {
-        e.currentTarget.setPointerCapture(e.pointerId);
-        setDragging(true);
-      }}
-      onPointerMove={(e) => dragging && moveTo(e)}
-      onPointerUp={() => setDragging(false)}
-      onPointerCancel={() => setDragging(false)}
-      onKeyDown={(e) => {
-        const step = { ArrowLeft: [-0.03, 0], ArrowRight: [0.03, 0], ArrowUp: [0, -0.03], ArrowDown: [0, 0.03] }[e.key];
-        if (!step) return;
-        e.preventDefault();
-        const unit = (n) => Math.min(0.97, Math.max(0.03, n));
-        onMove({ ...light, x: unit(light.x + step[0]), y: unit(light.y + step[1]) });
-      }}
-    >
-      <Glyph name="light" size={16} />
-    </button>
-  );
-}
-
-function LightSlider({ label, value, onChange }) {
-  return (
-    <label className="light-slider">
-      <span>{label}</span>
-      <input type="range" min="0" max="1" step="0.05" value={value} onChange={(e) => onChange(Number(e.target.value))} />
-    </label>
   );
 }
 

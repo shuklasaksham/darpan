@@ -8,7 +8,7 @@ import { config } from './config.js';
 import { pool, migrate } from './db.js';
 import { extractAudio, extractPoster, extractStrip, probe, ffmpegAvailable } from './ffmpeg.js';
 import { analyzeTake, findFillers, ruleNotes } from './analyze.js';
-import { captionWord, enqueueReel, jobStatus, sweepOldFiles, takeAspect, takesDir, trimFor, warmPiece } from './reels.js';
+import { captionWord, enqueueReel, jobStatus, sweepOldFiles, takesDir, trimFor, warmPiece } from './reels.js';
 import { dailyIdea, pushRouter, startDailyReminders, streakFor } from './daily.js';
 import { authRouter, loadUser, requireUser } from './auth.js';
 import { transcribeFile, transcribeWithWords, TranscribeError } from './transcribe.js';
@@ -590,8 +590,6 @@ function editableTake(t) {
     durationSeconds: t.duration_seconds,
     trim: { start: trim.start, end: trim.end, edited: t.trim_start != null },
     captionEdits: t.caption_edits ?? {},
-    light: t.light ?? null,
-    aspect: takeAspect(t),
     words: words.map((w, i) => ({ text: t.caption_words?.[i] ?? captionWord(w.text, t.language), start: w.start, end: w.end, filler: fillers.has(i) })),
   };
 }
@@ -602,12 +600,7 @@ app.patch('/api/takes/:id', requireUser, async (req, res, next) => {
     const take = await ownTake(req.params.id, req.user.id);
     if (!take) return res.status(404).json({ error: 'Take not found' });
     const body = req.body ?? {};
-    let { trim_start: start, trim_end: end, caption_edits: edits, light } = take;
-    if ('light' in body) {
-      const l = body.light;
-      const unit = (n, fallback) => (Number.isFinite(Number(n)) ? Math.min(1, Math.max(0, Number(n))) : fallback);
-      light = l && typeof l === 'object' ? { x: unit(l.x, 0.5), y: unit(l.y, 0.3), strength: unit(l.strength, 0.5), warmth: unit(l.warmth, 0.35) } : null;
-    }
+    let { trim_start: start, trim_end: end, caption_edits: edits } = take;
     if ('trimStart' in body || 'trimEnd' in body) {
       if (body.trimStart == null || body.trimEnd == null) {
         start = end = null;
@@ -629,8 +622,8 @@ app.patch('/api/takes/:id', requireUser, async (req, res, next) => {
       }
     }
     const { rows: [updated] } = await pool.query(
-      'UPDATE takes SET trim_start = $2, trim_end = $3, caption_edits = $4, light = $5, edited_at = now() WHERE id = $1 RETURNING *',
-      [take.id, start, end, edits && Object.keys(edits).length ? JSON.stringify(edits) : null, light ? JSON.stringify(light) : null],
+      'UPDATE takes SET trim_start = $2, trim_end = $3, caption_edits = $4, edited_at = now() WHERE id = $1 RETURNING *',
+      [take.id, start, end, edits && Object.keys(edits).length ? JSON.stringify(edits) : null],
     );
     res.json({ take: { ...editableTake(updated), available: await fileExists(updated.file_path) } });
     warmTake(updated.id, req.user.id);

@@ -303,40 +303,17 @@ const exists = (p) => (p ? fs.promises.access(p).then(() => true, () => false) :
 // hum, traffic) reduced, and the voice brought to Instagram's loudness.
 const AUDIO_CLEANUP = 'highpass=f=80,afftdn=nf=-25:tn=1,loudnorm=I=-14:TP=-1.5:LRA=11';
 
-/**
- * The creator's light, as a filter graph: a brighter, warmer copy of the frame
- * shows through a soft round mask centred where they put the light, so the
- * face near it lifts and the rest of the frame stays as shot.
- * light: { x, y } in frame fractions, strength and warmth from 0 to 1.
- */
-export function lightFilter(light, { width, height }, duration, input, output) {
-  const strength = clamp01(light.strength);
-  const warmth = clamp01(light.warmth);
-  // 6500K is neutral; lower is warmer.
-  const kelvin = Math.round(6500 - warmth * 2700);
-  const aspect = (width / height).toFixed(4);
-  // A gaussian spot, about a third of the frame height across, in each plane's own coordinates.
-  const spot = `${(255 * strength).toFixed(1)}*exp(-(pow((X/W-${clamp01(light.x).toFixed(4)})*${aspect},2)+pow(Y/H-${clamp01(light.y).toFixed(4)},2))/0.045)`;
-  return [
-    `[${input}]format=yuv420p,split[base][toLit]`,
-    `[toLit]eq=gamma=1.55:brightness=0.05:saturation=1.05,colortemperature=temperature=${kelvin}[bright]`,
-    `color=c=black:s=${width}x${height}:r=${FPS}:d=0.04,format=yuv420p,geq=lum='${spot}':cb='${spot}':cr='${spot}',loop=loop=${Math.ceil(duration * FPS) + FPS}:size=1:start=0,setpts=N/${FPS}/TB[mask]`,
-    // The mask runs a little long; the light ends with the take.
-    `[base][bright][mask]maskedmerge,trim=duration=${duration.toFixed(3)}[${output}]`,
-  ].join(';');
-}
-
-const clamp01 = (n) => Math.min(1, Math.max(0, Number(n) || 0));
-
 async function encodePiece({ take, trim, size, assPath, out, onProgress }) {
   const duration = trim.end - trim.start;
   const { width, height } = size;
-  // Crop from the centre to the reel's shape, as the camera preview showed it.
-  const shape = `scale=${width}:${height}:force_original_aspect_ratio=increase:flags=lanczos,crop=${width}:${height},setsar=1,fps=${FPS}`;
-  const subtitles = assPath ? `subtitles=filename='${filterPath(assPath)}':fontsdir='${filterPath(FONT_DIR)}'` : 'null';
-  const graph = take.light
-    ? [`[0:v:0]${shape}[shaped]`, lightFilter(take.light, size, duration, 'shaped', 'lit'), `[lit]${subtitles}[v]`].join(';')
-    : `[0:v:0]${shape},${subtitles}[v]`;
+  const video = [
+    // Crop from the centre to the reel's shape, as the camera preview showed it.
+    `scale=${width}:${height}:force_original_aspect_ratio=increase:flags=lanczos`,
+    `crop=${width}:${height}`,
+    'setsar=1',
+    `fps=${FPS}`,
+    ...(assPath ? [`subtitles=filename='${filterPath(assPath)}':fontsdir='${filterPath(FONT_DIR)}'`] : []),
+  ].join(',');
   // About 6 Mbps for 1080p and 3.5 for 720p: Instagram's own targets.
   const maxrate = width * height >= 1_500_000 ? 6000 : 3500;
 
@@ -345,10 +322,10 @@ async function encodePiece({ take, trim, size, assPath, out, onProgress }) {
   const args = ['-y', '-threads', THREADS, '-ss', trim.start.toFixed(3), '-t', duration.toFixed(3), '-i', take.file_path];
   if (!take.has_audio) args.push('-f', 'lavfi', '-t', duration.toFixed(3), '-i', 'anullsrc=r=48000:cl=stereo');
   args.push(
-    '-filter_threads', THREADS,
-    '-filter_complex', graph,
-    '-map', '[v]',
+    '-map', '0:v:0',
     '-map', take.has_audio ? '0:a:0' : '1:a:0',
+    '-filter_threads', THREADS,
+    '-vf', video,
     ...(take.has_audio ? ['-af', AUDIO_CLEANUP] : []),
     '-c:v', 'libx264', '-preset', PRESET, '-crf', '21', '-maxrate', `${maxrate}k`, '-bufsize', `${maxrate * 2}k`,
     '-profile:v', 'high', '-pix_fmt', 'yuv420p',
@@ -374,9 +351,8 @@ const stillWanted = (file) => Date.now() - (wanted.get(file) ?? 0) < WANTED_MS;
 function pieceFor(take, { captions, tag, size, hook = null }) {
   const trim = trimFor(take);
   const chunks = captions ? captionChunks(take.words ?? [], take.caption_words ?? null, trim, take.caption_edits, take.language ?? 'Hinglish') : [];
-  const light = take.light ?? null;
   const key = createHash('sha1')
-    .update(JSON.stringify({ v: PIECE_VERSION, trim, chunks, tag, size, hook, light, preset: PRESET }))
+    .update(JSON.stringify({ v: PIECE_VERSION, trim, chunks, tag, size, hook, preset: PRESET }))
     .digest('hex')
     .slice(0, 16);
   return { trim, chunks, hook, out: path.join(takesDir, `${take.id}.piece-${key}.mp4`) };
