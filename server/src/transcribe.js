@@ -16,9 +16,48 @@ export class TranscribeError extends Error {
   }
 }
 
-/** Streams an audio file from disk to Deepgram and returns the transcript. */
+// Sarvam's Saaras is trained on Indian speech and code-mixing, so it hears a
+// spoken idea far better than a general model. How each script language is written:
+const SARVAM_MODES = {
+  Hinglish: { mode: 'translit', language_code: 'unknown' }, // Roman letters, the way the script is written
+  Hindi: { mode: 'codemix', language_code: 'hi-IN' }, // Devanagari, English words left in English
+  English: { mode: 'transcribe', language_code: 'unknown' },
+};
+
+/**
+ * The creator's spoken idea as text: Sarvam when it's set up (best for Indian
+ * speech), Deepgram otherwise or if Sarvam fails.
+ */
 export async function transcribeFile(filePath, mimeType, language = 'Hinglish') {
+  if (config.sarvamApiKey) {
+    try {
+      const transcript = await transcribeSarvam(filePath, mimeType, language);
+      if (transcript || !config.deepgramApiKey) return transcript;
+    } catch (err) {
+      console.error('Sarvam transcription failed, trying Deepgram:', err.message);
+      if (!config.deepgramApiKey) throw new TranscribeError("Couldn't understand that recording. Try again or type your idea.");
+    }
+  }
   return (await transcribeWithWords(filePath, mimeType, language)).transcript;
+}
+
+async function transcribeSarvam(filePath, mimeType, language) {
+  const { mode, language_code } = SARVAM_MODES[language] ?? SARVAM_MODES.Hinglish;
+  const type = mimeType?.split(';')[0] || 'audio/webm';
+  const body = new FormData();
+  body.append('file', new Blob([await fs.promises.readFile(filePath)], { type }), `idea.${type.split('/')[1] || 'webm'}`);
+  body.append('model', 'saaras:v3');
+  body.append('mode', mode);
+  body.append('language_code', language_code);
+  const res = await fetch(`${config.sarvamBaseUrl}/speech-to-text`, {
+    method: 'POST',
+    headers: { 'api-subscription-key': config.sarvamApiKey },
+    body,
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) throw new Error(`Sarvam ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`);
+  const json = await res.json();
+  return json.transcript?.trim() ?? '';
 }
 
 /**

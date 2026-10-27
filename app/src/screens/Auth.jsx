@@ -10,6 +10,43 @@ const GENDERS = [
 ];
 const NICHES = ['Food', 'Fitness', 'Comedy', 'Beauty', 'Tech', 'Money', 'Travel', 'Fashion', 'Education'];
 const OTHER = 'Something else';
+
+/** "Food: budget street food in Indore" gives the script writer far more to go on than "Food". */
+export const joinNiche = (niche, detail) => (niche === OTHER ? detail.trim() : [niche, detail.trim()].filter(Boolean).join(': '));
+
+/** The other way round, for editing a saved niche: "Food: street food" -> ["Food", "street food"]. */
+export function splitNiche(full = '') {
+  const [head, ...rest] = full.split(':');
+  const match = NICHES.find((n) => n.toLowerCase() === head.trim().toLowerCase());
+  return match ? [match, rest.join(':').trim()] : full.trim() ? [OTHER, full.trim()] : ['', ''];
+}
+
+/** The niche chips plus an optional "be specific" line, used at sign-up and in Account. */
+export function NicheFields({ niche, detail, onNiche, onDetail }) {
+  return (
+    <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0 }}>
+      <legend className="small" style={{ fontWeight: 600, marginBottom: 8 }}>What do you make reels about?</legend>
+      <div className="chips">
+        {[...NICHES, OTHER].map((n) => (
+          <label key={n} className="chip">
+            <input type="radio" name="niche" value={n} checked={niche === n} onChange={() => onNiche(n)} required />
+            {n}
+          </label>
+        ))}
+      </div>
+      {niche && (
+        <input
+          value={detail}
+          onChange={(e) => onDetail(e.target.value)}
+          placeholder={niche === OTHER ? 'e.g. Marathi comedy, gardening in Delhi' : 'Be specific (optional), e.g. budget street food in Indore'}
+          maxLength={160}
+          aria-label="Your niche in a few words"
+          required={niche === OTHER}
+        />
+      )}
+    </fieldset>
+  );
+}
 const USERNAME = /^[a-z0-9._]{3,20}$/;
 
 export default function Auth({ initialMode = 'signup', onSignedIn, onExit }) {
@@ -45,8 +82,7 @@ function SignUp({ onSignedIn, onBack, onLogIn }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  // "Food: budget street food in Indore" gives the script writer far more to go on than "Food".
-  const fullNiche = niche === OTHER ? nicheDetail.trim() : [niche, nicheDetail.trim()].filter(Boolean).join(': ');
+  const fullNiche = joinNiche(niche, nicheDetail);
 
   async function loadSuggestions() {
     const { suggestions } = await suggestUsernames(name);
@@ -133,27 +169,7 @@ function SignUp({ onSignedIn, onBack, onLogIn }) {
             </div>
             <p className="hint">Hindi lines use the right verb: “main karti hoon” or “main karta hoon”.</p>
           </fieldset>
-          <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0 }}>
-            <legend className="small" style={{ fontWeight: 600, marginBottom: 8 }}>What do you make reels about?</legend>
-            <div className="chips">
-              {[...NICHES, OTHER].map((n) => (
-                <label key={n} className="chip">
-                  <input type="radio" name="niche" value={n} checked={niche === n} onChange={() => setNiche(n)} required />
-                  {n}
-                </label>
-              ))}
-            </div>
-            {niche && (
-              <input
-                value={nicheDetail}
-                onChange={(e) => setNicheDetail(e.target.value)}
-                placeholder={niche === OTHER ? 'e.g. Marathi comedy, gardening in Delhi' : 'Be specific (optional), e.g. budget street food in Indore'}
-                maxLength={160}
-                aria-label="Your niche in a few words"
-                required={niche === OTHER}
-              />
-            )}
-          </fieldset>
+          <NicheFields niche={niche} detail={nicheDetail} onNiche={setNiche} onDetail={setNicheDetail} />
           {error && <p className="error">{error}</p>}
           <p className="small muted">
             Already have an account?{' '}

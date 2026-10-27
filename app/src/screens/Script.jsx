@@ -5,6 +5,7 @@ import Glyph from '../ui/Glyph.jsx';
 import { BackBar, FramingTile } from '../ui/parts.jsx';
 import { nicheWord } from './Home.jsx';
 import Picker from '../ui/Picker.jsx';
+import { Mark } from '../ui/Brand.jsx';
 
 const FRAMING_HINTS = {
   closeup: 'Just your face',
@@ -108,14 +109,7 @@ export default function Script({ shoot, user, health, onStart, onBack }) {
       <div className="studio">
         <main className="screen">
           <BackBar onBack={onBack} title="Your script" />
-          <div className="big-state">
-            {shoot.idea && <h2 style={{ fontSize: 28 }}>“{shoot.idea}”</h2>}
-            <div className="row">
-              <div className="loader" aria-hidden="true" />
-              <p>Writing your script · checking what’s trending in {nicheWord(user?.niche)}</p>
-            </div>
-            <p className="small muted">Usually about 10 seconds</p>
-          </div>
+          <Writing idea={shoot.idea} niche={nicheWord(user?.niche)} />
         </main>
       </div>
     );
@@ -302,6 +296,39 @@ function ShotEditor({ shot, index, canRemove, onChange, onRemove, onDone }) {
           <Glyph name="check" size={18} /> Done
         </button>
       </div>
+    </div>
+  );
+}
+
+// What the script writer is doing, step by step, timed to how long each usually takes.
+const WRITING_STEPS = [
+  [0, () => 'Reading your idea'],
+  [1500, (niche) => `Checking what’s trending in ${niche}`],
+  [4000, () => 'Writing your lines'],
+  [8000, () => 'Planning your shots'],
+];
+
+function Writing({ idea, niche }) {
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    const timers = WRITING_STEPS.slice(1).map(([at], i) => setTimeout(() => setStep(i + 1), at));
+    return () => timers.forEach(clearTimeout);
+  }, []);
+  return (
+    <div className="big-state" role="status" aria-live="polite">
+      <div className="writing-mark" aria-hidden="true">
+        <span className="loader" />
+        <Mark />
+      </div>
+      {idea && <h2 style={{ fontSize: 28 }}>“{idea}”</h2>}
+      <ol className="steps">
+        {WRITING_STEPS.map(([, label], i) => (
+          <li key={i} className={i < step ? 'done' : i === step ? 'now' : 'muted'}>
+            {label(niche)}
+          </li>
+        ))}
+      </ol>
+      <p className="small muted">Usually about 10 seconds</p>
     </div>
   );
 }

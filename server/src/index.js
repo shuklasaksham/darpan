@@ -8,10 +8,10 @@ import { config } from './config.js';
 import { pool, migrate } from './db.js';
 import { extractAudio, extractPoster, extractStrip, probe, ffmpegAvailable } from './ffmpeg.js';
 import { analyzeTake, findFillers, ruleNotes } from './analyze.js';
-import { enqueueReel, jobStatus, sweepOldFiles, takesDir, toHinglish, trimFor, warmPiece } from './reels.js';
+import { captionWord, enqueueReel, jobStatus, sweepOldFiles, takesDir, trimFor, warmPiece } from './reels.js';
 import { authRouter, loadUser, requireUser } from './auth.js';
 import { transcribeFile, transcribeWithWords, TranscribeError } from './transcribe.js';
-import { checkFrame, ClaudeError, claudeConfigured, directorNotes, hinglishCaptions, trendCards, writeScript } from './claude.js';
+import { checkFrame, ClaudeError, claudeConfigured, directorNotes, spellCaptionWords, trendCards, writeScript } from './claude.js';
 import { speak, TtsError, ttsConfigured } from './tts.js';
 import { limits } from './limits.js';
 import { adminRouter } from './admin.js';
@@ -90,7 +90,7 @@ app.get('/api/health', async (_req, res) => {
     // 'persistent' when takes live on the Render Disk and survive redeploys.
     storage: config.uploadDir.startsWith('/var/data') ? 'persistent' : 'temporary',
     scripts: claudeConfigured,
-    voice: Boolean(config.deepgramApiKey),
+    voice: Boolean(config.deepgramApiKey || config.sarvamApiKey),
     tts: ttsConfigured,
     keys: {
       anthropic: Boolean(config.anthropicApiKey),
@@ -331,6 +331,7 @@ app.post('/api/takes', requireUser, limits.takes, takeUpload, async (req, res, n
       try {
         const notes = await directorNotes({
           shot,
+          script,
           transcript,
           words: words ?? [],
           analysis,
@@ -338,6 +339,7 @@ app.post('/api/takes', requireUser, limits.takes, takeUpload, async (req, res, n
           language,
         });
         director = { ...notes, source: 'claude' };
+        if (notes.scene != null) analysis.features.breakdown.scene = notes.scene;
       } catch (err) {
         console.error('Claude notes failed, using rules:', err.message);
       }
@@ -347,8 +349,8 @@ app.post('/api/takes', requireUser, limits.takes, takeUpload, async (req, res, n
     if (pool) {
       const { rows } = await pool.query(
         `INSERT INTO takes (user_id, original_name, size_bytes, duration_seconds, width, height, plan_id, shot_index,
-                            transcript, score, notes, features, notes_source, words, has_audio, aspect)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id`,
+                            transcript, score, notes, features, notes_source, words, has_audio, aspect, language)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id`,
         [
           req.user.id,
           video?.originalname ?? null,
@@ -366,6 +368,7 @@ app.post('/api/takes', requireUser, limits.takes, takeUpload, async (req, res, n
           words ? JSON.stringify(words) : null,
           meta.hasAudio,
           aspect,
+          language,
         ],
       );
       id = rows[0].id;
@@ -403,8 +406,8 @@ app.post('/api/takes', requireUser, limits.takes, takeUpload, async (req, res, n
       source: director.source,
       features: analysis.features,
     });
-    // After answering: the captions' Hinglish spellings, so making the reel doesn't wait for them.
-    if (pool && id && words?.length) spellCaptions(id, req.user.id, words);
+    // After answering: the captions' spellings, so making the reel doesn't wait for them.
+    if (pool && id && words?.length) spellCaptions(id, req.user.id, words, language);
   } catch (err) {
     next(err);
   } finally {
@@ -414,11 +417,11 @@ app.post('/api/takes', requireUser, limits.takes, takeUpload, async (req, res, n
   }
 });
 
-/** Roman Hinglish caption words for a take, from Claude; stored for the reel. */
-async function spellCaptions(id, userId, words) {
+/** Caption words for a take in its script's language, from Claude; stored for the reel. */
+async function spellCaptions(id, userId, words, language) {
   if (!claudeConfigured) return;
   try {
-    const [spelled] = await hinglishCaptions([words.map((w) => w.text)]);
+    const [spelled] = await spellCaptionWords([words.map((w) => w.text)], language);
     if (!spelled) return;
     await pool.query('UPDATE takes SET caption_words = $2 WHERE id = $1', [id, JSON.stringify(spelled)]);
     warmTake(id, userId);
@@ -528,7 +531,7 @@ function editableTake(t) {
     durationSeconds: t.duration_seconds,
     trim: { start: trim.start, end: trim.end, edited: t.trim_start != null },
     captionEdits: t.caption_edits ?? {},
-    words: words.map((w, i) => ({ text: t.caption_words?.[i] ?? toHinglish(w.text), start: w.start, end: w.end, filler: fillers.has(i) })),
+    words: words.map((w, i) => ({ text: t.caption_words?.[i] ?? captionWord(w.text, t.language), start: w.start, end: w.end, filler: fillers.has(i) })),
   };
 }
 

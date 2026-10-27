@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from './config.js';
+import { pool } from './db.js';
 
 const MODEL = process.env.CLAUDE_MODEL || 'claude-opus-5-5';
 // Tried if the main model is unavailable to this API key.
@@ -152,17 +153,66 @@ function wrapApiError(err) {
 // --- What's trending ---------------------------------------------------------
 
 const TREND_TTL_MS = 6 * 60 * 60 * 1000;
-const trendCache = new Map(); // key -> { notes, at }
+// Older trend cards are still shown (and refreshed behind the scenes) for this long.
+const TREND_KEEP_MS = 3 * 24 * 60 * 60 * 1000;
+const memoryCache = new Map(); // key -> { value, at }
+
+/**
+ * Trend notes and cards, kept in memory and in Postgres so a deploy or restart
+ * doesn't send every creator back to a slow web search.
+ */
+async function cacheGet(key) {
+  const hit = memoryCache.get(key);
+  if (hit) return hit;
+  if (!pool) return null;
+  try {
+    const { rows: [row] } = await pool.query('SELECT value, updated_at FROM trend_cache WHERE key = $1', [key]);
+    if (!row) return null;
+    const entry = { value: row.value, at: new Date(row.updated_at).getTime() };
+    memoryCache.set(key, entry);
+    return entry;
+  } catch (err) {
+    console.error('Trend cache read failed:', err.message);
+    return null;
+  }
+}
+
+async function cacheSet(key, value) {
+  memoryCache.set(key, { value, at: Date.now() });
+  if (memoryCache.size > 400) memoryCache.delete(memoryCache.keys().next().value);
+  if (!pool) return;
+  await pool
+    .query(
+      `INSERT INTO trend_cache (key, value, updated_at) VALUES ($1, $2, now())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+      [key, JSON.stringify(value)],
+    )
+    .catch((err) => console.error('Trend cache write failed:', err.message));
+}
+
+// One web search per niche at a time, however many creators ask at once.
+const inflight = new Map();
+function once(key, run) {
+  if (!inflight.has(key)) inflight.set(key, run().finally(() => inflight.delete(key)));
+  return inflight.get(key);
+}
 
 /**
  * Short notes on what's working in Indian Reels for this niche right now,
  * found with Claude's web search. Cached for a few hours per niche.
  */
-async function researchTrends(niche, language) {
-  const key = `${niche.toLowerCase()}|${language}`;
-  const cached = trendCache.get(key);
-  if (cached && Date.now() - cached.at < TREND_TTL_MS) return cached.notes;
+function researchTrends(niche, language) {
+  const key = `notes|${niche.toLowerCase()}|${language}`;
+  return once(key, async () => {
+    const cached = await cacheGet(key);
+    if (cached && Date.now() - cached.at < TREND_TTL_MS) return cached.value;
+    const notes = await searchTrends(niche, language);
+    if (notes) await cacheSet(key, notes);
+    return notes;
+  });
+}
 
+async function searchTrends(niche, language) {
   const messages = [
     {
       role: 'user',
@@ -203,10 +253,6 @@ async function researchTrends(niche, language) {
   } catch (err) {
     // Trends make the script better but aren't required for it.
     console.error('Trend research failed:', err.message);
-  }
-  if (notes) {
-    trendCache.set(key, { notes, at: Date.now() });
-    if (trendCache.size > 200) trendCache.delete(trendCache.keys().next().value);
   }
   return notes;
 }
@@ -403,7 +449,7 @@ export async function checkFrame({ imageBase64, shot, script, metrics, language 
       system: `You are a camera coach looking at one frame from a creator's phone just before they record a vertical Reel. Judge only what you can see.
 - light: is the face clearly and evenly lit? A bright wall behind someone is fine; only a window or lamp shining into the lens from behind them is backlight.
 - framing: does the framing match the planned shot (${shot?.framing ?? 'medium'})?
-- clutter: is the background distracting for this content?
+- clutter: is the background tidy and right for this content? Clothes, an unmade bed or piles of stuff in view are not ok. If a place was suggested (say a kitchen counter) and this is clearly somewhere else that doesn't suit the content (say a bed), it's not ok: tell them to move there.
 - angle: is the phone at a flattering height (around eye level, not looking up the nose)?
 Say each tip the way a friend holding the phone would: short, plain, casual ("karo", not "kijiye"). ${SPOKEN_RULES[lang]}`,
       messages: [
@@ -451,6 +497,8 @@ const noteSchema = {
         'cut_off_ending',
         'fillers',
         'over_length',
+        'wrong_place',
+        'messy_background',
         'other',
       ],
     },
@@ -462,9 +510,10 @@ const noteSchema = {
 const takeSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['score', 'notes', 'praise'],
+  required: ['score', 'scene', 'notes', 'praise'],
   properties: {
     score: { type: 'integer', description: '0-100' },
+    scene: { type: 'integer', description: 'The place and background, 0-10 (see the scene rules)' },
     notes: { type: 'array', items: noteSchema, description: 'At most 2, most important first' },
     praise: { type: 'string', description: 'One specific thing that worked, under 8 words, in the same language' },
   },
@@ -479,13 +528,18 @@ Give at most 2 notes, most important first, and only for problems the evidence s
 - cut_off_ending: the last word clipped by stopping too soon
 - fillers: "umm", "uh", "matlab", "basically", "you know"
 - over_length: well over the planned length
+- wrong_place: the script planned a place (say a kitchen counter) and they're somewhere clearly different that doesn't suit the content (say on a bed)
+- messy_background: clothes, an unmade bed, piles of stuff or anything else distracting in view
 Use "other" only for something clearly more important than all of these. A good take can have zero or one note.
+
+THE SCENE (look at the frames every time; the measurements can't see this):
+scene, out of 10: 9-10 the place matches the planned background and it's tidy; 6-8 a different place from the plan, but clean and it suits the content; 3-5 messy (clothes, an unmade bed, clutter) or clearly wrong for the content; 0-2 both the wrong place and messy. When scene is 5 or below, one of the notes must be about it: name the planned place or the thing to clear ("Kitchen counter pe shoot karo, script wahi ka hai", "Bed se kapde hata do").
 
 Each note is one short instruction for the next take, under 12 words. Say what to do, not a report of what went wrong ("Lens mein dekho, screen mein nahi", not "You were looking at the screen 40% of the time, which reduces eye contact"). No numbers unless they help, no jargon ("engagement", "retention", "delivery"), no filler praise like "Great job!". Use casual, gender-neutral Hindi forms: "karo", "dekho", "ruko" (never "kar rahe the" / "kar rahi thi").
 praise: one specific thing that worked, under 8 words ("Hook ekdum seedha tha"). Leave it empty rather than generic.
-The on-device measurements and the rule-based findings are evidence, not orders: the frames and transcript can overrule them. Start from the rule score and adjust by at most 15 points.`;
+The on-device measurements and the rule-based findings are evidence, not orders: the frames and transcript can overrule them. Start from the rule score and adjust by at most 15 points; a poor scene lowers it further on top of that (the app caps the score by the scene).`;
 
-export async function directorNotes({ shot, transcript, words, analysis, frames, language }) {
+export async function directorNotes({ shot, script, transcript, words, analysis, frames, language }) {
   if (!client) throw new ClaudeError('Director notes are not set up', 503);
   const lang = SPOKEN_RULES[language] ? language : 'Hinglish';
   const timed = words.map((w) => `${w.start.toFixed(2)} ${w.text}`).join(' | ');
@@ -505,6 +559,9 @@ export async function directorNotes({ shot, transcript, words, analysis, frames,
               text: [
                 frames.length ? `The ${frames.length} images are frames from the start, middle and end of the take.` : 'No frames.',
                 shot ? `Planned shot: ${shot.title} (${shot.framing}), planned ${shot.duration_seconds}s. Planned line: "${shot.line}"` : '',
+                shot?.direction ? `Planned direction: ${shot.direction}` : '',
+                script?.background?.suggestion ? `Planned place and background: ${script.background.suggestion}` : 'No planned place.',
+                script?.background?.avoid?.length ? `Background to avoid: ${script.background.avoid.join('; ')}` : '',
                 `Transcript (filler words kept): "${transcript}"`,
                 `Word start times (s): ${timed || 'none'}`,
                 `Measurements: ${JSON.stringify(analysis.features)}`,
@@ -520,14 +577,17 @@ export async function directorNotes({ shot, transcript, words, analysis, frames,
     }, { fast: true });
     const result = parseJsonResponse(message);
     result.notes = (result.notes ?? []).slice(0, 2);
-    result.score = Math.max(0, Math.min(100, Math.round(result.score)));
+    result.scene = Number.isFinite(result.scene) ? Math.max(0, Math.min(10, Math.round(result.scene))) : null;
+    // A great delivery on a messy bed isn't a 9: the scene caps the score (10 -> 100, 6 -> 80, 2 -> 60).
+    const cap = result.scene == null ? 100 : 50 + result.scene * 5;
+    result.score = Math.max(0, Math.min(100, cap, Math.round(result.score)));
     return result;
   } catch (err) {
     throw wrapApiError(err);
   }
 }
 
-// --- Hinglish captions -----------------------------------------------------
+// --- Captions -----------------------------------------------------------
 
 const captionSchema = {
   type: 'object',
@@ -546,19 +606,31 @@ const captionSchema = {
   },
 };
 
+// How caption words are written for each script language. Captions follow what
+// was said word for word (their timing is per word), so nothing is translated.
+const CAPTION_RULES = {
+  Hinglish:
+    'Write captions in Hinglish: Hindi and English in Roman script, spelled the way young Indians type ("main", "nahi", "bahut", "kya", "hai"). Convert Devanagari to Roman Hinglish and keep English words as they are.',
+  Hindi:
+    'Write captions in Hindi, in Devanagari: convert Roman-script Hindi words to Devanagari ("nahi" -> "नहीं"). Keep English words in English letters, the way Hindi captions on Reels usually show them.',
+  English:
+    'Write captions in English letters: keep English words as they are, fix obvious mis-hearings of English words, and write any Hindi word in Roman script.',
+};
+
 /**
- * Roman-script Hinglish spellings for transcript words, one output word per
- * input word, so caption timing stays exact. Returns an array per take (null
- * where Claude's answer didn't line up, so the caller can fall back).
+ * Caption spellings for transcript words in the script's language, one output
+ * word per input word, so caption timing stays exact. Returns an array per take
+ * (null where Claude's answer didn't line up, so the caller can fall back).
  */
-export async function hinglishCaptions(takes) {
+export async function spellCaptionWords(takes, language = 'Hinglish') {
+  const lang = CAPTION_RULES[language] ? language : 'Hinglish';
   if (!client) throw new ClaudeError('Captions are not set up', 503);
   try {
     const message = await create({
       model: MODEL,
       max_tokens: 8000,
       output_config: { effort: 'low', format: { type: 'json_schema', schema: captionSchema } },
-      system: `You write on-screen captions for Indian Reels in Hinglish: Hindi and English in Roman script, spelled the way young Indians type ("main", "nahi", "bahut", "kya", "hai"). For each take you get its words in order; return exactly one caption word for each input word, in the same order. Convert Devanagari to Roman Hinglish, keep English words as they are, keep numbers and the punctuation attached to a word. Never merge, split, drop or add words.`,
+      system: `You write on-screen captions for Indian Reels. ${CAPTION_RULES[lang]} For each take you get its words in order; return exactly one caption word for each input word, in the same order. Keep numbers and the punctuation attached to a word. Never merge, split, drop, add or translate words.`,
       messages: [{ role: 'user', content: JSON.stringify({ takes: takes.map((words) => ({ words })) }) }],
     });
     const result = parseJsonResponse(message);
@@ -573,7 +645,6 @@ export async function hinglishCaptions(takes) {
 
 // --- Trend cards for the home screen ----------------------------------------
 
-const cardCache = new Map(); // niche|language -> { cards, at }
 
 const cardsSchema = {
   type: 'object',
@@ -599,32 +670,64 @@ const cardsSchema = {
   },
 };
 
-/** 4-6 reel ideas riding what's trending in the creator's niche. */
+/**
+ * 4-6 reel ideas riding what's trending in the creator's niche, without making
+ * them wait on a web search: cards from the last few days come back at once
+ * (and are refreshed behind the scenes once they're 6 hours old); with nothing
+ * saved, quick ideas come back in a few seconds and the web-searched ones
+ * replace them for the next visit.
+ */
 export async function trendCards({ niche, language }) {
   if (!client) throw new ClaudeError('Trends are not set up', 503);
   const lang = SCRIPT_RULES[language] ? language : 'Hinglish';
-  const key = `${niche.toLowerCase()}|${lang}`;
-  const cached = cardCache.get(key);
-  if (cached && Date.now() - cached.at < TREND_TTL_MS) return cached.cards;
+  const key = `cards|${niche.toLowerCase()}|${lang}`;
+  const refresh = () =>
+    once(key, async () => {
+      const notes = await researchTrends(niche, lang);
+      if (notes) await cacheSet(key, { cards: await ideaCards(niche, lang, notes), searched: true });
+    }).catch((err) => console.error('Trend card refresh failed:', err.message));
+
   try {
-    const notes = await researchTrends(niche, lang);
-    const message = await create({
-      model: MODEL,
-      max_tokens: 3000,
-      output_config: { effort: 'low', format: { type: 'json_schema', schema: cardsSchema } },
-      system: `You suggest reel ideas for a first-time Indian creator who films alone on a phone. Give 4 to 6 specific, doable ideas for their niche that ride what's trending now. Write each title the way a creator would describe the idea to a friend (under 8 words, no hype words like "ultimate", "hack", "game-changer"), and each "why" in one short plain line. ${SCRIPT_RULES[lang]}`,
-      messages: [
-        {
-          role: 'user',
-          content: `Niche: ${niche}\n\n${notes ? `What's trending this week:\n${notes}` : 'No trend notes available; use what generally works for this niche in India.'}`,
-        },
-      ],
-    });
-    const cards = (parseJsonResponse(message).cards ?? []).slice(0, 6);
-    cardCache.set(key, { cards, at: Date.now() });
-    if (cardCache.size > 200) cardCache.delete(cardCache.keys().next().value);
+    const cached = await cacheGet(key);
+    const age = cached ? Date.now() - cached.at : Infinity;
+    if (cached?.value.cards?.length && age < TREND_KEEP_MS) {
+      if (!cached.value.searched || age > TREND_TTL_MS) refresh();
+      return cached.value.cards;
+    }
+    // Trend notes are usually ready when the creator has already written a script.
+    const notes = await cacheGet(`notes|${niche.toLowerCase()}|${lang}`);
+    if (notes && Date.now() - notes.at < TREND_TTL_MS) {
+      const cards = await ideaCards(niche, lang, notes.value);
+      await cacheSet(key, { cards, searched: true });
+      return cards;
+    }
+    const cards = await ideaCards(niche, lang, '', { fast: true });
+    await cacheSet(key, { cards, searched: false });
+    refresh();
     return cards;
   } catch (err) {
     throw wrapApiError(err);
   }
+}
+
+async function ideaCards(niche, lang, notes, { fast = false } = {}) {
+  const message = await create(
+    {
+      model: MODEL,
+      max_tokens: 3000,
+      output_config: { effort: 'low', format: { type: 'json_schema', schema: cardsSchema } },
+      system: `You suggest reel ideas for an Indian creator who films alone on a phone. Give 4 to 6 specific, doable ideas for their niche that ride what's trending now. Write each title the way a creator would describe the idea to a friend (under 8 words, no hype words like "ultimate", "hack", "game-changer"), and each "why" in one short plain line. ${SCRIPT_RULES[lang]}`,
+      messages: [
+        {
+          role: 'user',
+          content: `Niche: ${niche}
+
+${notes ? `What's trending this week:
+${notes}` : 'No trend notes yet; use what generally works for this niche in India right now.'}`,
+        },
+      ],
+    },
+    { fast },
+  );
+  return (parseJsonResponse(message).cards ?? []).slice(0, 6);
 }

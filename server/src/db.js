@@ -67,6 +67,7 @@ export async function migrate() {
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS aspect REAL;
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS caption_words JSONB;
+    ALTER TABLE takes ADD COLUMN IF NOT EXISTS language TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS pro_until TIMESTAMPTZ;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_dev BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS pro_complimentary BOOLEAN NOT NULL DEFAULT false;
@@ -97,6 +98,12 @@ export async function migrate() {
       height INT,
       duration_seconds REAL
     );
+    CREATE TABLE IF NOT EXISTS trend_cache (
+      key TEXT PRIMARY KEY,
+      value JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    DELETE FROM trend_cache WHERE updated_at < now() - interval '7 days';
     DELETE FROM sessions WHERE expires_at < now();
   `);
 }

@@ -315,8 +315,11 @@ textarea { resize: none; line-height: 1.5; }
 }
 .tag.ink { background: rgb(10 10 10 / 0.72); color: var(--white); }
 
-.loader { width: 36px; height: 36px; border-radius: 50%; border: 3px solid var(--border-default); border-top-color: var(--marigold-500); animation: spin 0.9s linear infinite; }
+.loader { flex: none; aspect-ratio: 1; width: 36px; height: 36px; border-radius: 50%; border: 3px solid var(--border-default); border-top-color: var(--marigold-500); animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.writing-mark { position: relative; width: 72px; height: 72px; display: grid; place-items: center; flex: none; }
+.writing-mark .loader { position: absolute; inset: 0; width: 72px; height: 72px; }
+.writing-mark .mark { height: 34px; width: auto; color: var(--text-primary); }
 .pulse { animation: pulse 1.6s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.45; } }
 

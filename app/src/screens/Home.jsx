@@ -12,7 +12,8 @@ export const LANGUAGE_OPTIONS = [
   { value: 'Hindi', label: 'Hindi', hint: 'देवनागरी में' },
   { value: 'English', label: 'English', hint: 'Simple Indian English' },
 ];
-const MAX_VOICE_SECONDS = 60;
+// The voice service answers fastest (and best) for clips under 30 seconds.
+const MAX_VOICE_SECONDS = 30;
 const CARD_GLYPHS = ['reel', 'idea', 'shoot', 'light', 'frame'];
 
 export function savedLanguage() {
@@ -26,6 +27,20 @@ export function savedLanguage() {
 export function saveLanguage(language) {
   try {
     localStorage.setItem('darpan.language', language);
+  } catch {}
+}
+
+function readJson(key) {
+  try {
+    return JSON.parse(localStorage.getItem(key)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function writeJson(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
   } catch {}
 }
 
@@ -50,14 +65,21 @@ export default function Home({ user, health, shoots, onShoot, onResume, onAccoun
   useEffect(() => {
     if (!trendsOn) return;
     let alive = true;
-    setCards(null);
+    // Show the last cards for this niche at once, then swap in fresh ones.
+    const key = `darpan.trends.${user.niche}|${language}`;
+    const saved = readJson(key);
+    setCards(saved);
     getTrends(language)
-      .then(({ cards: list }) => alive && setCards(list ?? []))
-      .catch(() => alive && setCards([]));
+      .then(({ cards: list }) => {
+        if (!alive) return;
+        setCards(list ?? []);
+        if (list?.length) writeJson(key, list);
+      })
+      .catch(() => alive && setCards((current) => current ?? []));
     return () => {
       alive = false;
     };
-  }, [trendsOn, language]);
+  }, [trendsOn, language, user.niche]);
 
   const typedIdea = idea.trim();
   const submit = (e) => {

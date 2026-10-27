@@ -189,7 +189,7 @@ export default function Reel({ planId, shots, kept, caption = '', onKeptChange, 
                   setDirty(true);
                 }}
               >
-                <Glyph name="captions" /> Hinglish captions
+                <Glyph name="captions" /> Captions
               </Switch>
             </div>
             <div className="opt-row">
@@ -561,7 +561,7 @@ function TrimBar({ takeId, duration, trim, time, onTrim }) {
 }
 
 const STAGES = [
-  { match: /caption/i, label: 'Writing your Hinglish captions', captionsOnly: true },
+  { match: /caption/i, label: 'Writing your captions', captionsOnly: true },
   { match: /editing shot|getting/i, label: 'Trimming each take to your words' },
   { match: /joining|ready/i, label: (n) => `Joining ${n} shots into one video` },
 ];
@@ -644,7 +644,7 @@ function Finished({ reel, captions, caption, onEdit, onDone }) {
       [
         reel.durationSeconds && formatTime(reel.durationSeconds),
         reel.width && `${reel.width} × ${reel.height}`,
-        captions && 'Hinglish captions',
+        captions && 'captions',
         copied && 'caption copied',
       ]
         .filter(Boolean)
