@@ -30,6 +30,10 @@ export const logOut = () => postJson('/api/auth/logout', {});
 export const updateNiche = (niche) =>
   request('/api/auth/me', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ niche }) });
 
+export const getDaily = (language) => request(`/api/daily?language=${encodeURIComponent(language)}`);
+export const getPushKey = () => request('/api/push/key');
+export const subscribePush = (subscription, language) => postJson('/api/push/subscribe', { subscription, language });
+export const unsubscribePush = (endpoint) => postJson('/api/push/unsubscribe', { endpoint });
 export const getTrends = (language) => request(`/api/trends?language=${encodeURIComponent(language)}`);
 export const writeScript = (brief) => postJson('/api/script', brief);
 export const saveScript = (planId, script) =>

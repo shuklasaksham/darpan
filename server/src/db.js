@@ -68,6 +68,19 @@ export async function migrate() {
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS aspect REAL;
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS caption_words JSONB;
     ALTER TABLE takes ADD COLUMN IF NOT EXISTS language TEXT;
+    ALTER TABLE takes ADD COLUMN IF NOT EXISTS light JSONB;
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value JSONB NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      endpoint TEXT PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      keys JSONB NOT NULL,
+      language TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_sent_on DATE
+    );
     ALTER TABLE users ADD COLUMN IF NOT EXISTS pro_until TIMESTAMPTZ;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_dev BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS pro_complimentary BOOLEAN NOT NULL DEFAULT false;

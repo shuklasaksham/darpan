@@ -8,7 +8,8 @@ import { config } from './config.js';
 import { pool, migrate } from './db.js';
 import { extractAudio, extractPoster, extractStrip, probe, ffmpegAvailable } from './ffmpeg.js';
 import { analyzeTake, findFillers, ruleNotes } from './analyze.js';
-import { captionWord, enqueueReel, jobStatus, sweepOldFiles, takesDir, trimFor, warmPiece } from './reels.js';
+import { captionWord, enqueueReel, jobStatus, sweepOldFiles, takeAspect, takesDir, trimFor, warmPiece } from './reels.js';
+import { dailyIdea, pushRouter, startDailyReminders, streakFor } from './daily.js';
 import { authRouter, loadUser, requireUser } from './auth.js';
 import { transcribeFile, transcribeWithWords, TranscribeError } from './transcribe.js';
 import { checkFrame, ClaudeError, claudeConfigured, directorNotes, spellCaptionWords, trendCards, writeScript } from './claude.js';
@@ -125,6 +126,21 @@ async function loadPlan(planId, userId) {
   return rows[0]?.plan ?? null;
 }
 
+// Home's "Today's idea" and the creator's streak of days with a finished reel.
+app.get('/api/daily', requireUser, async (req, res, next) => {
+  try {
+    const [idea, streak] = await Promise.all([
+      claudeConfigured ? dailyIdea(req.user, req.query.language).catch(() => null) : null,
+      streakFor(req.user.id),
+    ]);
+    res.json({ idea, streak });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.use('/api/push', requireUser, pushRouter);
+
 app.get('/api/trends', requireUser, limits.trends, async (req, res, next) => {
   try {
     res.json({ cards: await trendCards({ niche: req.user.niche, language: req.query.language }) });
@@ -204,13 +220,25 @@ app.patch('/api/plans/:id/post', requireUser, async (req, res, next) => {
   const hashtags = Array.isArray(req.body?.hashtags)
     ? [...new Set(req.body.hashtags.map((t) => `#${String(t).replace(/^#+/, '').replace(/[^\p{L}\p{M}\p{N}_]/gu, '')}`).filter((t) => t.length > 1))].slice(0, 30)
     : null;
-  if (caption === null && hashtags === null) return res.status(400).json({ error: 'Send a caption or hashtags' });
+  const hookText = typeof req.body?.hookText === 'string' ? req.body.hookText.trim().slice(0, 80) : null;
+  const hookOn = typeof req.body?.hookOn === 'boolean' ? req.body.hookOn : null;
+  if (caption === null && hashtags === null && hookText === null && hookOn === null) {
+    return res.status(400).json({ error: 'Send a caption, hashtags or hook text' });
+  }
   try {
     const plan = await loadPlan(req.params.id, req.user.id);
     if (!plan) return res.status(404).json({ error: 'Script not found' });
-    const updated = { ...plan, ...(caption !== null && { caption }), ...(hashtags !== null && { hashtags }) };
+    const updated = {
+      ...plan,
+      ...(caption !== null && { caption }),
+      ...(hashtags !== null && { hashtags }),
+      ...(hookText !== null && { hook_text: hookText }),
+      ...(hookOn !== null && { hook_on: hookOn }),
+    };
     await pool.query('UPDATE shoot_plans SET plan = $3 WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id, updated]);
-    res.json({ caption: updated.caption ?? '', hashtags: updated.hashtags ?? [] });
+    res.json({ caption: updated.caption ?? '', hashtags: updated.hashtags ?? [], hookText: updated.hook_text ?? '', hookOn: updated.hook_on !== false });
+    // The first shot's piece carries the hook: start re-making it.
+    if (hookText !== null || hookOn !== null) warmPlanHook(req.params.id, req.user.id);
   } catch (err) {
     next(err);
   }
@@ -453,10 +481,22 @@ async function spellCaptions(id, userId, words, language) {
 async function warmTake(id, userId) {
   try {
     const take = await ownTake(id, userId);
-    if (take?.kept && take.file_path) warmPiece(take, await planFor(userId));
+    if (!take?.kept || !take.file_path) return;
+    const hook = take.shot_index === 0 ? hookFor(await loadPlan(take.plan_id, userId)) : null;
+    warmPiece(take, await planFor(userId), hook);
   } catch (err) {
     console.error(`Couldn't start rendering take ${id}:`, err.message);
   }
+}
+
+/** The plan's on-screen hook text, or null when there's none or it's switched off. */
+const hookFor = (plan) => (plan && plan.hook_on !== false && plan.hook_text?.trim() ? plan.hook_text.trim() : null);
+
+async function warmPlanHook(planId, userId) {
+  const { rows } = await pool
+    .query('SELECT id FROM takes WHERE user_id = $1 AND plan_id = $2 AND shot_index = 0 AND kept', [userId, planId])
+    .catch(() => ({ rows: [] }));
+  for (const t of rows) warmTake(t.id, userId);
 }
 
 async function ownTake(id, userId) {
@@ -550,6 +590,8 @@ function editableTake(t) {
     durationSeconds: t.duration_seconds,
     trim: { start: trim.start, end: trim.end, edited: t.trim_start != null },
     captionEdits: t.caption_edits ?? {},
+    light: t.light ?? null,
+    aspect: takeAspect(t),
     words: words.map((w, i) => ({ text: t.caption_words?.[i] ?? captionWord(w.text, t.language), start: w.start, end: w.end, filler: fillers.has(i) })),
   };
 }
@@ -560,7 +602,12 @@ app.patch('/api/takes/:id', requireUser, async (req, res, next) => {
     const take = await ownTake(req.params.id, req.user.id);
     if (!take) return res.status(404).json({ error: 'Take not found' });
     const body = req.body ?? {};
-    let { trim_start: start, trim_end: end, caption_edits: edits } = take;
+    let { trim_start: start, trim_end: end, caption_edits: edits, light } = take;
+    if ('light' in body) {
+      const l = body.light;
+      const unit = (n, fallback) => (Number.isFinite(Number(n)) ? Math.min(1, Math.max(0, Number(n))) : fallback);
+      light = l && typeof l === 'object' ? { x: unit(l.x, 0.5), y: unit(l.y, 0.3), strength: unit(l.strength, 0.5), warmth: unit(l.warmth, 0.35) } : null;
+    }
     if ('trimStart' in body || 'trimEnd' in body) {
       if (body.trimStart == null || body.trimEnd == null) {
         start = end = null;
@@ -582,8 +629,8 @@ app.patch('/api/takes/:id', requireUser, async (req, res, next) => {
       }
     }
     const { rows: [updated] } = await pool.query(
-      'UPDATE takes SET trim_start = $2, trim_end = $3, caption_edits = $4, edited_at = now() WHERE id = $1 RETURNING *',
-      [take.id, start, end, edits && Object.keys(edits).length ? JSON.stringify(edits) : null],
+      'UPDATE takes SET trim_start = $2, trim_end = $3, caption_edits = $4, light = $5, edited_at = now() WHERE id = $1 RETURNING *',
+      [take.id, start, end, edits && Object.keys(edits).length ? JSON.stringify(edits) : null, light ? JSON.stringify(light) : null],
     );
     res.json({ take: { ...editableTake(updated), available: await fileExists(updated.file_path) } });
     warmTake(updated.id, req.user.id);
@@ -671,7 +718,8 @@ app.post('/api/reels', requireUser, limits.reels, async (req, res, next) => {
       'INSERT INTO reels (user_id, plan_id, take_ids, captions) VALUES ($1, $2, $3, $4) RETURNING *',
       [req.user.id, takes[0].plan_id, takeIds, req.body.captions !== false],
     );
-    enqueueReel({ ...reel, takes, maxLongEdge: plan.maxLongEdge, tag: plan.tag });
+    const hook = hookFor(await loadPlan(takes[0].plan_id, req.user.id));
+    enqueueReel({ ...reel, takes, hook, maxLongEdge: plan.maxLongEdge, tag: plan.tag });
     res.status(202).json({ reelId: reel.id });
   } catch (err) {
     next(err);
@@ -788,6 +836,7 @@ await migrate();
 await reconcilePro().catch((err) => console.error('Pro reconcile failed:', err.message));
 sweepOldFiles().catch(() => {});
 startPaymentSweeper();
+startDailyReminders();
 setInterval(() => sweepOldFiles().catch(() => {}), 60 * 60 * 1000).unref();
 const server = app.listen(config.port, () => console.log(`Darpan listening on :${config.port}`));
 

@@ -874,3 +874,25 @@ td:nth-child(4) { white-space: normal; min-width: 160px; }
 .tag-chip button { all: unset; cursor: pointer; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; }
 .tags input { flex: 1; min-width: 110px; min-height: 36px; padding: 4px 6px; border: 0; background: none; color: var(--text-primary); font-size: 15px; }
 .tags input:focus { outline: none; }
+
+/* Home: today's idea and the streak. */
+.home-top { gap: var(--space-3); }
+.home-top .wordmark { margin-right: auto; }
+.streak-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px 4px 8px; border-radius: var(--radius-full); background: var(--bg-raised); color: var(--text-muted); font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; }
+.streak-chip.lit { background: var(--bg-brand-tint); color: var(--text-brand); }
+.today-card { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5); border-radius: var(--radius-lg); background: var(--bg-brand-tint); }
+.today-card h2 { font-size: 26px; line-height: 1.15; }
+.today-card .today-foot { flex-wrap: wrap; gap: var(--space-2); }
+.today-card .today-foot .link { display: inline-flex; align-items: center; gap: 4px; }
+
+/* Shot editor: the light and the hook preview. */
+.editor-preview .light-glow { position: absolute; inset: 0; pointer-events: none; mix-blend-mode: screen; }
+.light-handle { position: absolute; width: 34px; height: 34px; min-height: 34px; padding: 0; transform: translate(-50%, -50%); border-radius: 50%; border: 2px solid var(--white); background: var(--marigold-500); color: var(--ink-950); box-shadow: 0 0 0 6px rgb(240 162 59 / 0.3), 0 2px 10px rgb(0 0 0 / 0.4); touch-action: none; cursor: grab; }
+.light-handle.dragging { cursor: grabbing; box-shadow: 0 0 0 10px rgb(240 162 59 / 0.35), 0 2px 10px rgb(0 0 0 / 0.4); }
+.editor-preview .hook-cap { position: absolute; left: 10%; right: 10%; top: 17%; text-align: center; font-family: var(--font-body); font-weight: 700; font-size: 15px; line-height: 1.2; color: var(--ink-950); }
+.editor-preview .hook-cap { background: var(--white); padding: 3px 6px; border-radius: 3px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.light-slider { display: grid; grid-template-columns: 96px 1fr; align-items: center; gap: var(--space-3); font-size: 15px; font-weight: 600; }
+.light-slider input { width: 100%; accent-color: var(--marigold-500); }
+.compare { touch-action: none; user-select: none; -webkit-user-select: none; }
+.hook-row { flex-direction: column; align-items: stretch; gap: var(--space-2); }
+.hook-row input { min-height: 44px; }
