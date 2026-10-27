@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Glyph from '../ui/Glyph.jsx';
 import { Switch, readPref, resetDate, shortDate, writePref } from '../ui/parts.jsx';
 import { LANGUAGE_OPTIONS, savedLanguage, saveLanguage } from './Home.jsx';
@@ -7,6 +7,7 @@ import { Paywall, useBilling } from './Plan.jsx';
 import { shootProgress } from './Recent.jsx';
 import { posterUrl, updateNiche } from '../api.js';
 import { NicheFields } from './Auth.jsx';
+import { needsHomeScreen, pushSupported, remindersOn, turnOffReminders, turnOnReminders } from '../reminders.js';
 
 export default function Account({ user, shoots, onLogOut, onUserChange }) {
   const [billing] = useBilling();
@@ -14,6 +15,28 @@ export default function Account({ user, shoots, onLogOut, onUserChange }) {
   const [voiceTips, setVoiceTips] = useState(() => readPref('voiceTips', true));
   const [paywall, setPaywall] = useState(false);
   const [editingNiche, setEditingNiche] = useState(false);
+  const [reminder, setReminder] = useState(false);
+  const [reminderNote, setReminderNote] = useState('');
+
+  useEffect(() => {
+    remindersOn().then(setReminder).catch(() => {});
+  }, []);
+
+  async function toggleReminder(on) {
+    setReminderNote('');
+    if (!on) {
+      setReminder(false);
+      await turnOffReminders().catch(() => {});
+      return;
+    }
+    if (needsHomeScreen()) {
+      setReminderNote('On iPhone, add Darpan to your Home Screen first: tap Share, then “Add to Home Screen”, and turn this on from there.');
+      return;
+    }
+    const result = await turnOnReminders(language).catch(() => 'denied');
+    setReminder(result === 'on');
+    if (result === 'denied') setReminderNote('Notifications are blocked for Darpan. Allow them in your browser’s site settings, then try again.');
+  }
   const niche = user.niche?.split(':')[0];
   const pro = billing?.plan === 'pro';
   const used = billing?.reelsThisMonth ?? 0;
@@ -99,6 +122,16 @@ export default function Account({ user, shoots, onLogOut, onUserChange }) {
             </Switch>
           </div>
         </li>
+        {pushSupported() && (
+          <li>
+            <div className="list-row">
+              <Switch checked={reminder} onChange={toggleReminder}>
+                Daily idea at 9 am
+              </Switch>
+            </div>
+            {reminderNote && <p className="small notice" style={{ marginBottom: 'var(--space-3)' }}>{reminderNote}</p>}
+          </li>
+        )}
         <li>
           <a className="list-row" href="/terms">
             Terms and privacy <Glyph name="chevron" size={18} />

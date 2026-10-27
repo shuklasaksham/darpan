@@ -906,6 +906,8 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
           planId={planned?.planId}
           postCaption={script?.caption ?? ''}
           hashtags={Array.isArray(script?.hashtags) ? script.hashtags : []}
+          hookText={script?.hook_text ?? ''}
+          hookOn={script?.hook_on !== false && Boolean(script?.hook_text?.trim())}
           onPostChange={(post) => setPlanned((p) => ({ ...p, script: { ...p.script, ...post } }))}
           shots={shots}
           kept={kept}

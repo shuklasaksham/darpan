@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { getTrends, posterUrl, transcribe } from '../api.js';
+import { getDaily, getTrends, posterUrl, transcribe } from '../api.js';
+import { needsHomeScreen, pushSupported, remindersOn, turnOnReminders } from '../reminders.js';
 import { pickMimeType, stopStream } from '../media.js';
 import { resumeState, shootProgress } from './Recent.jsx';
 import { Wordmark } from '../ui/Brand.jsx';
@@ -52,6 +53,7 @@ export default function Home({ user, health, shoots, onShoot, onResume, onAccoun
   const [language, setLanguage] = useState(savedLanguage);
   const [cards, setCards] = useState(null); // null while loading
   const [listening, setListening] = useState(false);
+  const [daily, setDaily] = useState(null); // { idea, streak }
   const firstName = user.name.split(/\s+/)[0];
   const trendsOn = Boolean(health?.scripts);
   const firstTime = shoots !== null && shoots.length === 0;
@@ -81,6 +83,16 @@ export default function Home({ user, health, shoots, onShoot, onResume, onAccoun
     };
   }, [trendsOn, language, user.niche]);
 
+  useEffect(() => {
+    let alive = true;
+    getDaily(language)
+      .then((d) => alive && setDaily(d))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [language, user.niche]);
+
   const typedIdea = idea.trim();
   const submit = (e) => {
     e.preventDefault();
@@ -91,6 +103,12 @@ export default function Home({ user, health, shoots, onShoot, onResume, onAccoun
     <main className="screen with-tabs">
       <header className="home-top">
         <Wordmark />
+        {daily?.streak?.current > 0 && (
+          <span className={`streak-chip ${daily.streak.today ? 'lit' : ''}`} title={daily.streak.today ? 'You made a reel today' : 'Make a reel today to keep your streak'}>
+            <Glyph name="flame" size={18} /> {daily.streak.current}
+            <span className="sr-only">-day streak</span>
+          </span>
+        )}
         <button className="avatar" onClick={onAccount} aria-label="Your account">
           {firstName[0]?.toUpperCase()}
         </button>
@@ -126,6 +144,8 @@ export default function Home({ user, health, shoots, onShoot, onResume, onAccoun
         </button>
       </form>
 
+      {daily?.idea && <TodayCard idea={daily.idea} streak={daily.streak} language={language} onShoot={() => onShoot({ idea: daily.idea.title, format: daily.idea.format ?? null, language })} />}
+
       {firstTime && (
         <section className="first-reel">
           <div className="row between">
@@ -148,7 +168,7 @@ export default function Home({ user, health, shoots, onShoot, onResume, onAccoun
           <div className="rail" role="list">
             {cards === null
               ? [0, 1, 2].map((i) => <div key={i} className="trend-card skeleton" aria-hidden="true" />)
-              : cards.map((card, i) => (
+              : cards.filter((card) => card.title !== daily?.idea?.title).map((card, i) => (
                   <button
                     key={i}
                     role="listitem"
@@ -167,6 +187,56 @@ export default function Home({ user, health, shoots, onShoot, onResume, onAccoun
         </section>
       )}
     </main>
+  );
+}
+
+/** One trend idea picked for today, the streak, and the daily reminder. */
+function TodayCard({ idea, streak, language, onShoot }) {
+  const [reminder, setReminder] = useState(null); // null while checking | on | off | denied | homescreen
+  useEffect(() => {
+    remindersOn()
+      .then((on) => setReminder(on ? 'on' : 'off'))
+      .catch(() => setReminder('off'));
+  }, []);
+
+  async function remind() {
+    if (needsHomeScreen()) return setReminder('homescreen');
+    const result = await turnOnReminders(language).catch(() => 'denied');
+    setReminder(result === 'on' ? 'on' : result === 'unsupported' ? 'homescreen' : 'denied');
+  }
+
+  const line =
+    streak?.current > 0
+      ? streak.today
+        ? `${streak.current}-day streak. Nice, see you tomorrow.`
+        : `${streak.current}-day streak. Make a reel today to keep it.`
+      : 'Make one reel today to start a streak.';
+  return (
+    <section className="today-card">
+      <span className="eyebrow">Today’s idea for you</span>
+      <h2>{idea.title}</h2>
+      {idea.why && <p className="muted">{idea.why}</p>}
+      <button className="primary block" onClick={onShoot}>
+        Shoot this today <Glyph name="next" size={20} />
+      </button>
+      <div className="row between today-foot">
+        <span className="small row" style={{ gap: 6 }}>
+          <Glyph name="flame" size={18} /> {line}
+        </span>
+        {pushSupported() && reminder === 'off' && (
+          <button className="link strong small" style={{ minHeight: 0, padding: 0 }} onClick={remind}>
+            <Glyph name="bell" size={16} /> Remind me daily
+          </button>
+        )}
+        {reminder === 'on' && <span className="small muted">Reminder at 9 am</span>}
+      </div>
+      {reminder === 'homescreen' && (
+        <p className="small notice">
+          On iPhone, add Darpan to your Home Screen first: tap Share, then “Add to Home Screen”. Open it from there and tap Remind me daily.
+        </p>
+      )}
+      {reminder === 'denied' && <p className="small notice">Notifications are blocked for Darpan. Allow them in your browser’s site settings, then try again.</p>}
+    </section>
   );
 }
 

@@ -28,7 +28,7 @@ const FONT = 'Mukta';
 const LEAD_IN = 0.15; // seconds kept before the first word
 const TAIL = 0.4; // and after the last, so nothing sounds clipped
 const FPS = 30;
-const PIECE_VERSION = 3; // bump when the encode settings change, so old pieces aren't reused
+const PIECE_VERSION = 4; // bump when the encode settings change, so old pieces aren't reused
 
 // x264 "veryfast" at CRF 21 looks close to the phone's own recording; the
 // maxrate keeps files small enough to download quickly on mobile data.
@@ -246,10 +246,18 @@ const assTime = (s) => {
 };
 const assText = (t) => t.replace(/\\/g, '\\\\').replace(/[{}]/g, '').replace(/\n/g, ' ');
 
-/** Subtitle file with the captions (lower middle, above Reels' own UI) and the tag. */
-export function assFile({ width, height, duration, chunks, tag = true }) {
+// How long the hook text stays up at the start of the reel.
+const HOOK_SECONDS = 2.2;
+
+/**
+ * Subtitle file with the captions (lower middle, above Reels' own UI), the tag,
+ * and on the reel's first shot the hook: big ink-on-white text in the top third
+ * for the first two seconds, the way most Reels open.
+ */
+export function assFile({ width, height, duration, chunks, tag = true, hook = null }) {
   const size = Math.round(height * 0.042);
   const tagSize = Math.round(height * 0.022);
+  const hookSize = Math.round(height * 0.054);
   return `[Script Info]
 ScriptType: v4.00+
 PlayResX: ${width}
@@ -261,10 +269,11 @@ ScaledBorderAndShadow: yes
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Caption,${FONT},${size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,${Math.max(2, Math.round(size * 0.09))},${Math.round(size * 0.04)},2,${Math.round(width * 0.08)},${Math.round(width * 0.08)},${Math.round(height * 0.3)},1
 Style: Tag,${FONT},${tagSize},&H30FFFFFF,&H000000FF,&H60000000,&H00000000,-1,0,0,0,100,100,1,0,1,${Math.max(1, Math.round(tagSize * 0.08))},0,8,10,10,${Math.round(height * 0.06)},1
+Style: Hook,${FONT},${hookSize},&H000A0A0A,&H000000FF,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,100,0,0,3,${Math.round(hookSize * 0.28)},0,8,${Math.round(width * 0.1)},${Math.round(width * 0.1)},${Math.round(height * 0.17)},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-${tag ? `Dialogue: 0,${assTime(0)},${assTime(duration + 1)},Tag,,0,0,0,,Shot with Darpan\n` : ''}${chunks.map((c) => `Dialogue: 1,${assTime(c.start)},${assTime(c.end)},Caption,,0,0,0,,${assText(c.text)}`).join('\n')}
+${tag ? `Dialogue: 0,${assTime(0)},${assTime(duration + 1)},Tag,,0,0,0,,Shot with Darpan\n` : ''}${hook ? `Dialogue: 2,${assTime(0)},${assTime(Math.min(HOOK_SECONDS, duration))},Hook,,0,0,0,,{\\fad(0,250)}${assText(hook)}\n` : ''}${chunks.map((c) => `Dialogue: 1,${assTime(c.start)},${assTime(c.end)},Caption,,0,0,0,,${assText(c.text)}`).join('\n')}
 `;
 }
 
@@ -290,17 +299,44 @@ function ffmpeg(args, { duration, onProgress } = {}) {
 const filterPath = (p) => p.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
 const exists = (p) => (p ? fs.promises.access(p).then(() => true, () => false) : Promise.resolve(false));
 
+// Phone audio, cleaned: rumble below 80 Hz cut, steady background noise (fans,
+// hum, traffic) reduced, and the voice brought to Instagram's loudness.
+const AUDIO_CLEANUP = 'highpass=f=80,afftdn=nf=-25:tn=1,loudnorm=I=-14:TP=-1.5:LRA=11';
+
+/**
+ * The creator's light, as a filter graph: a brighter, warmer copy of the frame
+ * shows through a soft round mask centred where they put the light, so the
+ * face near it lifts and the rest of the frame stays as shot.
+ * light: { x, y } in frame fractions, strength and warmth from 0 to 1.
+ */
+export function lightFilter(light, { width, height }, duration, input, output) {
+  const strength = clamp01(light.strength);
+  const warmth = clamp01(light.warmth);
+  // 6500K is neutral; lower is warmer.
+  const kelvin = Math.round(6500 - warmth * 2700);
+  const aspect = (width / height).toFixed(4);
+  // A gaussian spot, about a third of the frame height across, in each plane's own coordinates.
+  const spot = `${(255 * strength).toFixed(1)}*exp(-(pow((X/W-${clamp01(light.x).toFixed(4)})*${aspect},2)+pow(Y/H-${clamp01(light.y).toFixed(4)},2))/0.045)`;
+  return [
+    `[${input}]format=yuv420p,split[base][toLit]`,
+    `[toLit]eq=gamma=1.55:brightness=0.05:saturation=1.05,colortemperature=temperature=${kelvin}[bright]`,
+    `color=c=black:s=${width}x${height}:r=${FPS}:d=0.04,format=yuv420p,geq=lum='${spot}':cb='${spot}':cr='${spot}',loop=loop=${Math.ceil(duration * FPS) + FPS}:size=1:start=0,setpts=N/${FPS}/TB[mask]`,
+    // The mask runs a little long; the light ends with the take.
+    `[base][bright][mask]maskedmerge,trim=duration=${duration.toFixed(3)}[${output}]`,
+  ].join(';');
+}
+
+const clamp01 = (n) => Math.min(1, Math.max(0, Number(n) || 0));
+
 async function encodePiece({ take, trim, size, assPath, out, onProgress }) {
   const duration = trim.end - trim.start;
   const { width, height } = size;
-  const video = [
-    // Crop from the centre to the reel's shape, as the camera preview showed it.
-    `scale=${width}:${height}:force_original_aspect_ratio=increase:flags=lanczos`,
-    `crop=${width}:${height}`,
-    'setsar=1',
-    `fps=${FPS}`,
-    ...(assPath ? [`subtitles=filename='${filterPath(assPath)}':fontsdir='${filterPath(FONT_DIR)}'`] : []),
-  ].join(',');
+  // Crop from the centre to the reel's shape, as the camera preview showed it.
+  const shape = `scale=${width}:${height}:force_original_aspect_ratio=increase:flags=lanczos,crop=${width}:${height},setsar=1,fps=${FPS}`;
+  const subtitles = assPath ? `subtitles=filename='${filterPath(assPath)}':fontsdir='${filterPath(FONT_DIR)}'` : 'null';
+  const graph = take.light
+    ? [`[0:v:0]${shape}[shaped]`, lightFilter(take.light, size, duration, 'shaped', 'lit'), `[lit]${subtitles}[v]`].join(';')
+    : `[0:v:0]${shape},${subtitles}[v]`;
   // About 6 Mbps for 1080p and 3.5 for 720p: Instagram's own targets.
   const maxrate = width * height >= 1_500_000 ? 6000 : 3500;
 
@@ -309,10 +345,11 @@ async function encodePiece({ take, trim, size, assPath, out, onProgress }) {
   const args = ['-y', '-threads', THREADS, '-ss', trim.start.toFixed(3), '-t', duration.toFixed(3), '-i', take.file_path];
   if (!take.has_audio) args.push('-f', 'lavfi', '-t', duration.toFixed(3), '-i', 'anullsrc=r=48000:cl=stereo');
   args.push(
-    '-map', '0:v:0',
-    '-map', take.has_audio ? '0:a:0' : '1:a:0',
     '-filter_threads', THREADS,
-    '-vf', video,
+    '-filter_complex', graph,
+    '-map', '[v]',
+    '-map', take.has_audio ? '0:a:0' : '1:a:0',
+    ...(take.has_audio ? ['-af', AUDIO_CLEANUP] : []),
     '-c:v', 'libx264', '-preset', PRESET, '-crf', '21', '-maxrate', `${maxrate}k`, '-bufsize', `${maxrate * 2}k`,
     '-profile:v', 'high', '-pix_fmt', 'yuv420p',
     '-r', String(FPS), '-g', String(FPS * 2), '-threads', THREADS, '-x264-params', 'rc-lookahead=10',
@@ -327,25 +364,33 @@ async function encodePiece({ take, trim, size, assPath, out, onProgress }) {
 // --- Pieces ----------------------------------------------------------------
 
 const inflight = new Map(); // piece path -> { task, listeners }
+// Pieces asked for in the last few minutes (a reel may be about to join them):
+// kept when a newer edit of the same take finishes rendering.
+const wanted = new Map(); // piece path -> when it was last asked for
+const WANTED_MS = 15 * 60 * 1000;
+const stillWanted = (file) => Date.now() - (wanted.get(file) ?? 0) < WANTED_MS;
 
 /** Everything that changes how a take's piece looks, and the cache file for it. */
-function pieceFor(take, { captions, tag, size }) {
+function pieceFor(take, { captions, tag, size, hook = null }) {
   const trim = trimFor(take);
   const chunks = captions ? captionChunks(take.words ?? [], take.caption_words ?? null, trim, take.caption_edits, take.language ?? 'Hinglish') : [];
+  const light = take.light ?? null;
   const key = createHash('sha1')
-    .update(JSON.stringify({ v: PIECE_VERSION, trim, chunks, tag, size, preset: PRESET }))
+    .update(JSON.stringify({ v: PIECE_VERSION, trim, chunks, tag, size, hook, light, preset: PRESET }))
     .digest('hex')
     .slice(0, 16);
-  return { trim, chunks, out: path.join(takesDir, `${take.id}.piece-${key}.mp4`) };
+  return { trim, chunks, hook, out: path.join(takesDir, `${take.id}.piece-${key}.mp4`) };
 }
 
 /**
  * The take's piece for these settings: from the cache, from a render already
  * under way, or rendered now. Returns its path; `cached` when no work was needed.
  */
-export async function ensurePiece(take, { captions = true, tag = true, size }, { priority = 'low', onProgress } = {}) {
+export async function ensurePiece(take, { captions = true, tag = true, size, hook = null }, { priority = 'low', onProgress } = {}) {
   if (!(await exists(take.file_path))) throw Object.assign(new Error('Take file missing'), { missing: Number(take.id) });
-  const { trim, chunks, out } = pieceFor(take, { captions, tag, size });
+  const { trim, chunks, out } = pieceFor(take, { captions, tag, size, hook });
+  wanted.set(out, Date.now());
+  if (wanted.size > 2000) for (const [file, at] of wanted) if (Date.now() - at > WANTED_MS) wanted.delete(file);
   if (await exists(out)) return { out, trim, cached: true };
 
   let entry = inflight.get(out);
@@ -353,16 +398,16 @@ export async function ensurePiece(take, { captions = true, tag = true, size }, {
     entry = { listeners: new Set() };
     entry.task = schedule(async () => {
       const tmp = `${out}.part.mp4`;
-      const assPath = chunks.length || tag ? `${out}.ass` : null;
+      const assPath = chunks.length || tag || hook ? `${out}.ass` : null;
       try {
-        if (assPath) await fs.promises.writeFile(assPath, assFile({ ...size, duration: trim.end - trim.start, chunks, tag }));
+        if (assPath) await fs.promises.writeFile(assPath, assFile({ ...size, duration: trim.end - trim.start, chunks, tag, hook }));
         await encodePiece({ take, trim, size, assPath, out: tmp, onProgress: (p) => entry.listeners.forEach((fn) => fn(p)) });
         await fs.promises.rename(tmp, out);
-        // Older pieces of this take (before an edit) won't be used again.
+        // Older pieces of this take (before an edit) won't be used again, unless one was asked for just now.
         const prefix = `${take.id}.piece-`;
         for (const name of await fs.promises.readdir(takesDir).catch(() => [])) {
           const file = path.join(takesDir, name);
-          if (name.startsWith(prefix) && file !== out && !inflight.has(file.replace(/\.part\.mp4$|\.ass$/, ''))) {
+          if (name.startsWith(prefix) && file !== out && !inflight.has(file.replace(/\.part\.mp4$|\.ass$/, '')) && !stillWanted(file)) {
             await fs.promises.rm(file, { force: true });
           }
         }
@@ -387,13 +432,13 @@ export async function ensurePiece(take, { captions = true, tag = true, size }, {
 
 /**
  * Starts making a kept take's piece in the background, with the settings its
- * reel will most likely use (captions on, the creator's plan), so the reel is
- * ready to join by the time the last shot is kept.
+ * reel will most likely use (captions on, the creator's plan, the hook on the
+ * first shot), so the reel is ready to join by the time the last shot is kept.
  */
-export function warmPiece(take, plan) {
+export function warmPiece(take, plan, hook = null) {
   if (!take?.file_path) return;
   const size = reelSize(takeAspect(take), plan.maxLongEdge);
-  ensurePiece(take, { captions: true, tag: plan.tag !== false, size }).catch((err) => {
+  ensurePiece(take, { captions: true, tag: plan.tag !== false, size, hook }).catch((err) => {
     if (!err.missing) console.error(`Pre-render of take ${take.id} failed:`, err.message);
   });
 }
@@ -427,8 +472,9 @@ async function buildReel(reel, job) {
 
     // Ask for every piece at once (cached ones return straight away), then wait in order.
     job.stage = 'Editing your shots';
+    // The hook goes on the first shot only.
     const pieces = takes.map((take, i) =>
-      ensurePiece(take, settings, {
+      ensurePiece(take, { ...settings, hook: i === 0 ? (reel.hook ?? null) : null }, {
         priority: 'high',
         onProgress: (p) => {
           done[i] = p * lengths[i];

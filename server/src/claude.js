@@ -276,10 +276,14 @@ const shotSchema = {
 const scriptSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['title', 'hook', 'trend_used', 'shots', 'background', 'lighting', 'caption', 'hashtags'],
+  required: ['title', 'hook', 'hook_text', 'trend_used', 'shots', 'background', 'lighting', 'caption', 'hashtags'],
   properties: {
     title: { type: 'string' },
     hook: { type: 'string', description: 'The idea behind the first 2 seconds' },
+    hook_text: {
+      type: 'string',
+      description: 'Big on-screen text for the first 2 seconds of the reel: 3 to 7 words that make someone stop scrolling, in the script language. A claim, number or question from this script, not a greeting or the title.',
+    },
     trend_used: { type: 'string', description: 'Which current trend this rides, or "" if none fits' },
     shots: { type: 'array', items: shotSchema },
     background: {
@@ -338,7 +342,7 @@ const HINGLISH_WORDS =
 
 /** True when an "English" script contains Devanagari or several Hinglish words. */
 function looksHindi(script) {
-  const text = [script.title, script.hook, ...(script.shots ?? []).map((s) => `${s.line} ${s.direction}`)].join(' ');
+  const text = [script.title, script.hook, script.hook_text, ...(script.shots ?? []).map((s) => `${s.line} ${s.direction}`)].join(' ');
   return /[ऀ-ॿ]/.test(text) || (text.match(HINGLISH_WORDS) ?? []).length >= 3;
 }
 
