@@ -50,6 +50,8 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   const language = shoot.language;
 
   const videoRef = useRef(null);
+  const stageRef = useRef(null);
+  const topRef = useRef(null);
   const streamRef = useRef(null);
   const recorderRef = useRef(null);
   const audioRecorderRef = useRef(null);
@@ -664,6 +666,19 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
 
   // --- UI -----------------------------------------------------------------
 
+  // How far the top bar reaches into the video, for fading the framing guide out under it.
+  useEffect(() => {
+    const top = topRef.current;
+    const stage = stageRef.current;
+    if (!top || !stage || typeof ResizeObserver === 'undefined') return;
+    const measure = () => stage.style.setProperty('--overlay-top', `${Math.max(0, top.getBoundingClientRect().bottom - stage.getBoundingClientRect().top)}px`);
+    const observer = new ResizeObserver(measure);
+    observer.observe(top);
+    observer.observe(stage);
+    measure();
+    return () => observer.disconnect();
+  }, [permission, reelOpen]);
+
   const script = planned?.script;
   const planSeconds = Number(shot?.duration_seconds) || 0;
   const busy = recording || countdown > 0;
@@ -683,7 +698,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   return (
     <div className="camera studio">
       <div className="stage">
-        <div className="stage-frame" style={{ '--aspect': aspect }}>
+        <div className="stage-frame" ref={stageRef} style={{ '--aspect': aspect }}>
           <video ref={videoRef} className={mirrored ? 'mirrored' : ''} autoPlay playsInline muted onLoadedMetadata={() => setVideoReady(true)} />
           {shot && !recording && <FrameGuide framing={framing} aspect={aspect} matched={matched} />}
           {debug && debugInfo && <DebugOverlay info={debugInfo} aspect={aspect} mirrored={mirrored} />}
@@ -691,172 +706,184 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
       </div>
       <div className="cam-scrim-top" aria-hidden="true" />
 
-      <div className="cam-top">
-        <div className="row">
-          <button className="cam-btn" onClick={onClose} aria-label="Close camera" disabled={recording}>
-            <Glyph name="x" size={22} />
-          </button>
-          <span className="shot-title">
-            {shots.length ? `Shot ${shotIndex + 1} of ${shots.length}${shot?.title ? ` · ${shot.title}` : ''}` : 'Your take'}
-          </span>
-        </div>
-        {shots.length > 1 && (
-          <div className="segments cam" role="tablist" aria-label="Shots">
-            {shots.map((s, i) => (
-              <button
-                key={i}
-                role="tab"
-                aria-selected={i === shotIndex}
-                aria-label={`Shot ${i + 1}: ${s.title}${kept[i] ? ', kept' : ''}`}
-                disabled={busy}
-                onClick={() => setShotIndex(i)}
-                style={{ all: 'unset', flex: 1, padding: '8px 0', cursor: 'pointer' }}
-              >
-                <i className={kept[i] && i !== shotIndex ? 'on' : ''} style={{ display: 'block' }}>
-                  {i === shotIndex && <b style={{ width: recording && planSeconds ? `${Math.min(100, (seconds / planSeconds) * 100)}%` : '100%' }} />}
-                </i>
-              </button>
-            ))}
-          </div>
-        )}
-        {shot && (
-          <Teleprompter
-            shot={shot}
-            next={shots[shotIndex + 1]}
-            recording={recording}
-            levelRef={levelRef}
-            size={promptSize}
-          />
-        )}
-        {recording && (
-          <span className="rec-time" aria-live="off">
-            {formatTime(seconds)}
-            {planSeconds ? ` / ${formatTime(planSeconds)}` : ''}
-          </span>
-        )}
-      </div>
-
-      {!recording && (
-        <div className="tool-rail">
-          <button className="cam-btn" onClick={() => setFacing((f) => (f === 'user' ? 'environment' : 'user'))} disabled={busy} aria-label="Flip camera">
-            <Glyph name="flip" size={22} />
-          </button>
-          <button className={`cam-btn ${showAspects ? 'on' : ''}`} onClick={() => setShowAspects((v) => !v)} disabled={busy} aria-label={`Aspect ratio ${aspectKey}`}>
-            {aspectKey}
-          </button>
-          <button
-            className="cam-btn"
-            onClick={() => {
-              const next = (promptSize + 1) % 3;
-              setPromptSize(next);
-              writePref('promptSize', next);
-            }}
-            aria-label="Teleprompter text size"
-            style={{ fontSize: [13, 15, 18][promptSize] }}
-          >
-            Aa
-          </button>
-          <button
-            className="cam-btn"
-            onClick={() => {
-              const next = TIMERS[(TIMERS.indexOf(timer) + 1) % TIMERS.length];
-              setTimer(next);
-              writePref('timer', next);
-            }}
-            disabled={busy}
-            aria-label={timer ? `Countdown ${timer} seconds` : 'No countdown'}
-          >
-            {timer ? `${timer}s` : 'Off'}
-          </button>
-          <button className="cam-btn" onClick={() => setMuted((m) => !m)} aria-label={muted ? 'Turn spoken tips on' : 'Turn spoken tips off'}>
-            <Glyph name={muted ? 'muted' : 'speaker'} size={22} />
-          </button>
-        </div>
-      )}
-
-      {showAspects && !busy && (
-        <div className="aspect-menu" role="group" aria-label="Aspect ratio">
-          {Object.keys(ASPECTS).map((key) => (
-            <button
-              key={key}
-              className={`chip ${key === aspectKey ? 'selected' : ''}`}
-              onClick={() => {
-                setAspectKey(key);
-                setShowAspects(false);
-              }}
-            >
-              {key}
+      {/* Top (script), middle (the creator's face, kept clear) and bottom (coach,
+          tools, shutter) stack in one column, so nothing overlaps on short phones. */}
+      <div className="cam-ui">
+        <div className="cam-top" ref={topRef}>
+          <div className="row">
+            <button className="cam-btn" onClick={onClose} aria-label="Close camera" disabled={recording}>
+              <Glyph name="x" size={22} />
             </button>
-          ))}
+            <span className="shot-title">
+              {shots.length ? `Shot ${shotIndex + 1} of ${shots.length}${shot?.title ? ` · ${shot.title}` : ''}` : 'Your take'}
+            </span>
+            {recording ? (
+              <span style={{ width: 44 }} aria-hidden="true" />
+            ) : (
+              <button className="cam-btn" onClick={() => setFacing((f) => (f === 'user' ? 'environment' : 'user'))} disabled={busy} aria-label="Flip camera">
+                <Glyph name="flip" size={22} />
+              </button>
+            )}
+          </div>
+          {shots.length > 1 && (
+            <div className="segments cam" role="tablist" aria-label="Shots">
+              {shots.map((s, i) => (
+                <button
+                  key={i}
+                  role="tab"
+                  aria-selected={i === shotIndex}
+                  aria-label={`Shot ${i + 1}: ${s.title}${kept[i] ? ', kept' : ''}`}
+                  disabled={busy}
+                  onClick={() => setShotIndex(i)}
+                  style={{ all: 'unset', flex: 1, padding: '8px 0', cursor: 'pointer' }}
+                >
+                  <i className={kept[i] && i !== shotIndex ? 'on' : ''} style={{ display: 'block' }}>
+                    {i === shotIndex && <b style={{ width: recording && planSeconds ? `${Math.min(100, (seconds / planSeconds) * 100)}%` : '100%' }} />}
+                  </i>
+                </button>
+              ))}
+            </div>
+          )}
+          {shot && busy && (
+            <Teleprompter
+              shot={shot}
+              next={shots[shotIndex + 1]}
+              recording={recording}
+              levelRef={levelRef}
+              size={promptSize}
+            />
+          )}
+          {recording && (
+            <span className="rec-time" aria-live="off">
+              {formatTime(seconds)}
+              {planSeconds ? ` / ${formatTime(planSeconds)}` : ''}
+            </span>
+          )}
         </div>
-      )}
-
-      {!recording && !countdown && claude && !claude.error && (
-        <div className="coach-stack">
-          <LookCard result={claude} onClose={() => setClaude(null)} />
+        <div className="cam-middle">
+          {showAspects && !busy && (
+            <div className="aspect-menu" role="group" aria-label="Aspect ratio">
+              {Object.keys(ASPECTS).map((key) => (
+                <button
+                  key={key}
+                  className={`chip ${key === aspectKey ? 'selected' : ''}`}
+                  onClick={() => {
+                    setAspectKey(key);
+                    setShowAspects(false);
+                  }}
+                >
+                  {key}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-      )}
-
-      {!countdown && <CoachPill tip={tip} recording={recording} visionState={visionState} hasShot={Boolean(shot)} lostNotice={lostNotice} onDismissLost={() => setLostNotice(0)} />}
-
+        <div className="cam-foot">
+          {!recording && !countdown && claude && !claude.error && (
+            <div className="coach-stack">
+              <LookCard result={claude} onClose={() => setClaude(null)} />
+            </div>
+          )}
+          {shot && !busy && (
+            <button className="line-peek" onClick={() => setShowScript(true)} aria-label={`Open the whole script. Your line: ${shot.line}`}>
+              <span className="eyebrow">Your line</span>
+              <span className="say">{shot.line}</span>
+            </button>
+          )}
+          {!countdown && <CoachPill tip={tip} recording={recording} visionState={visionState} hasShot={Boolean(shot)} lostNotice={lostNotice} onDismissLost={() => setLostNotice(0)} />}
+          {!recording && (
+            <div className="cam-tools">
+              <button className={`cam-btn ${showAspects ? 'on' : ''}`} onClick={() => setShowAspects((v) => !v)} disabled={busy} aria-label={`Aspect ratio ${aspectKey}`}>
+                {aspectKey}
+              </button>
+              <button
+                className="cam-btn"
+                onClick={() => {
+                  const next = (promptSize + 1) % 3;
+                  setPromptSize(next);
+                  writePref('promptSize', next);
+                }}
+                aria-label="Teleprompter text size"
+                style={{ fontSize: [13, 15, 18][promptSize] }}
+              >
+                Aa
+              </button>
+              <button
+                className="cam-btn"
+                onClick={() => {
+                  const next = TIMERS[(TIMERS.indexOf(timer) + 1) % TIMERS.length];
+                  setTimer(next);
+                  writePref('timer', next);
+                }}
+                disabled={busy}
+                aria-label={timer ? `Countdown ${timer} seconds` : 'No countdown'}
+              >
+                {timer ? `${timer}s` : 'Off'}
+              </button>
+              <button className="cam-btn" onClick={() => setMuted((m) => !m)} aria-label={muted ? 'Turn spoken tips on' : 'Turn spoken tips off'}>
+                <Glyph name={muted ? 'muted' : 'speaker'} size={22} />
+              </button>
+            </div>
+          )}
+          <div className="cam-bottom">
+            {cameraError ? (
+              <div className="stack" style={{ width: '100%', textAlign: 'center' }}>
+                <p>{cameraError}</p>
+                <label className="button primary">
+                  Use the phone camera instead
+                  <input type="file" accept="video/*" capture="user" onChange={onPickFile} hidden />
+                </label>
+              </div>
+            ) : (
+              <>
+                <span className="slot">
+                  {lastKept && !busy && (
+                    <button
+                      className="kept-thumb"
+                      onClick={() => allKept && setReelOpen(true)}
+                      aria-label={allKept ? 'Open your reel' : `${Object.keys(kept).length} of ${shots.length} shots kept`}
+                    >
+                      {lastKept.blob ? (
+                        <video src={`${lastKept.url}#t=0.3`} muted playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        <img src={posterUrl(lastKept.takeId)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      )}
+                      <b>
+                        {Object.keys(kept).length}/{shots.length}
+                      </b>
+                    </button>
+                  )}
+                </span>
+                <button
+                  className={`shutter ${recording ? 'recording' : ''}`}
+                  onClick={recording ? stopRecording : countdown ? () => setCountdown(0) : startCountdown}
+                  disabled={!videoReady || Boolean(take) || showScript || reelOpen}
+                  aria-label={recording ? 'Stop recording' : countdown ? 'Cancel countdown' : 'Start recording'}
+                />
+                <span className="slot">
+                  {!busy &&
+                    (allKept ? (
+                      <button className="cam-btn" style={{ width: 52, height: 52 }} onClick={() => setReelOpen(true)} aria-label="Your reel">
+                        <Glyph name="reel" />
+                      </button>
+                    ) : (
+                      script && (
+                        <button className="cam-btn" style={{ width: 52, height: 52 }} onClick={() => setShowScript(true)} aria-label="Read the whole script">
+                          <Glyph name="script" />
+                        </button>
+                      )
+                    ))}
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
       {countdown > 0 && (
         <div className="countdown" aria-live="assertive">
           {countdown}
         </div>
       )}
-
-      <div className="cam-bottom">
-        {cameraError ? (
-          <div className="stack" style={{ width: '100%', textAlign: 'center' }}>
-            <p>{cameraError}</p>
-            <label className="button primary">
-              Use the phone camera instead
-              <input type="file" accept="video/*" capture="user" onChange={onPickFile} hidden />
-            </label>
-          </div>
-        ) : (
-          <>
-            <span className="slot">
-              {lastKept && !busy && (
-                <button
-                  className="kept-thumb"
-                  onClick={() => allKept && setReelOpen(true)}
-                  aria-label={allKept ? 'Open your reel' : `${Object.keys(kept).length} of ${shots.length} shots kept`}
-                >
-                  {lastKept.blob ? (
-                    <video src={`${lastKept.url}#t=0.3`} muted playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  ) : (
-                    <img src={posterUrl(lastKept.takeId)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  )}
-                  <b>
-                    {Object.keys(kept).length}/{shots.length}
-                  </b>
-                </button>
-              )}
-            </span>
-            <button
-              className={`shutter ${recording ? 'recording' : ''}`}
-              onClick={recording ? stopRecording : countdown ? () => setCountdown(0) : startCountdown}
-              disabled={!videoReady || Boolean(take) || showScript || reelOpen}
-              aria-label={recording ? 'Stop recording' : countdown ? 'Cancel countdown' : 'Start recording'}
-            />
-            <span className="slot">
-              {!busy &&
-                (allKept ? (
-                  <button className="cam-btn" style={{ width: 52, height: 52 }} onClick={() => setReelOpen(true)} aria-label="Your reel">
-                    <Glyph name="reel" />
-                  </button>
-                ) : (
-                  script && (
-                    <button className="cam-btn" style={{ width: 52, height: 52 }} onClick={() => setShowScript(true)} aria-label="Read the whole script">
-                      <Glyph name="script" />
-                    </button>
-                  )
-                ))}
-            </span>
-          </>
-        )}
-      </div>
 
       {showScript && script && <ScriptSheet script={script} onClose={() => setShowScript(false)} />}
 
@@ -877,7 +904,9 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
       {reelOpen && allKept && (
         <Reel
           planId={planned?.planId}
-          caption={[script?.caption, ...(Array.isArray(script?.hashtags) ? script.hashtags : [])].filter(Boolean).join(' ')}
+          postCaption={script?.caption ?? ''}
+          hashtags={Array.isArray(script?.hashtags) ? script.hashtags : []}
+          onPostChange={(post) => setPlanned((p) => ({ ...p, script: { ...p.script, ...post } }))}
           shots={shots}
           kept={kept}
           onKeptChange={setKept}

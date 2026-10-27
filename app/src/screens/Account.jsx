@@ -6,7 +6,7 @@ import Picker from '../ui/Picker.jsx';
 import { Paywall, useBilling } from './Plan.jsx';
 import { shootProgress } from './Recent.jsx';
 import { posterUrl, updateNiche } from '../api.js';
-import { NicheFields, joinNiche, splitNiche } from './Auth.jsx';
+import { NicheFields } from './Auth.jsx';
 
 export default function Account({ user, shoots, onLogOut, onUserChange }) {
   const [billing] = useBilling();
@@ -135,12 +135,10 @@ export default function Account({ user, shoots, onLogOut, onUserChange }) {
 }
 
 function NicheSheet({ current, onSaved, onClose }) {
-  const [initialNiche, initialDetail] = splitNiche(current);
-  const [niche, setNiche] = useState(initialNiche);
-  const [detail, setDetail] = useState(initialDetail);
+  const [niche, setNiche] = useState(current ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const full = joinNiche(niche, detail);
+  const full = niche.trim();
 
   async function save(e) {
     e.preventDefault();
@@ -161,7 +159,7 @@ function NicheSheet({ current, onSaved, onClose }) {
       <form className="sheet" onClick={(e) => e.stopPropagation()} onSubmit={save}>
         <h2>Your niche</h2>
         <p className="muted">Scripts and trending ideas follow this.</p>
-        <NicheFields niche={niche} detail={detail} onNiche={setNiche} onDetail={setDetail} />
+        <NicheFields value={niche} onChange={setNiche} />
         {error && <p className="error">{error}</p>}
         <button className="primary block" disabled={busy || !full}>
           {busy ? 'Saving…' : 'Save'}

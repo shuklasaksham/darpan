@@ -720,10 +720,7 @@ async function ideaCards(niche, lang, notes, { fast = false } = {}) {
       messages: [
         {
           role: 'user',
-          content: `Niche: ${niche}
-
-${notes ? `What's trending this week:
-${notes}` : 'No trend notes yet; use what generally works for this niche in India right now.'}`,
+          content: `Niche: ${niche}\n\n${notes ? `What's trending this week:\n${notes}` : 'No trend notes yet; use what generally works for this niche in India right now.'}`,
         },
       ],
     },

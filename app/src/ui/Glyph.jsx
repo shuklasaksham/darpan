@@ -107,6 +107,12 @@ const GLYPHS = {
       <path className={A} d="M9 18h6" />
     </>
   ),
+  copy: (
+    <>
+      <rect x="8.5" y="8.5" width="11.5" height="11.5" rx="3" />
+      <path d="M15.5 8.5V7A3 3 0 0 0 12.5 4H7a3 3 0 0 0-3 3v5.5a3 3 0 0 0 3 3h1.5" />
+    </>
+  ),
   pro: (
     <>
       <path d="M3.5 17.5h17" />
