@@ -74,6 +74,10 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   const [countdown, setCountdown] = useState(0);
   const [timer, setTimer] = useState(() => readPref('timer', 3));
   const [promptSize, setPromptSize] = useState(() => readPref('promptSize', 1));
+  const [promptSpeed, setPromptSpeed] = useState(() => {
+    const saved = readPref('promptSpeed', 1);
+    return PROMPT_SPEEDS.includes(saved) ? saved : 1;
+  });
   const [kept, setKept] = useState(initialKept ?? {}); // shotIndex -> { takeId, blob, url, result }
   // Resuming a shoot whose shots are all kept goes straight to the reel.
   const [reelOpen, setReelOpen] = useState(() => everyShotKept(initialPlan, initialKept));
@@ -751,6 +755,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
               recording={recording}
               levelRef={levelRef}
               size={promptSize}
+              speed={promptSpeed}
             />
           )}
           {recording && (
@@ -807,6 +812,18 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
                 style={{ fontSize: [13, 15, 18][promptSize] }}
               >
                 Aa
+              </button>
+              <button
+                className="cam-btn"
+                onClick={() => {
+                  const next = PROMPT_SPEEDS[(PROMPT_SPEEDS.indexOf(promptSpeed) + 1) % PROMPT_SPEEDS.length];
+                  setPromptSpeed(next);
+                  writePref('promptSpeed', next);
+                }}
+                disabled={busy}
+                aria-label={`Teleprompter speed ${promptSpeed} times`}
+              >
+                {promptSpeed}×
               </button>
               <button
                 className="cam-btn"
@@ -975,34 +992,45 @@ function CoachPill({ tip, recording, visionState, hasShot, lostNotice, onDismiss
   return null;
 }
 
+// Teleprompter speeds the creator can pick; 1 is a natural speaking pace.
+const PROMPT_SPEEDS = [0.75, 1, 1.25, 1.5];
+const SPEECH_HOLD_MS = 300; // gaps between words and syllables shorter than this count as still speaking
+
 /**
  * The current line near the lens. While recording it follows the creator's
  * voice: it moves on while they're speaking and waits while they pause. It
  * listens to loudness, not words, so it keeps pace rather than reading along.
  */
-function Teleprompter({ shot, next, recording, levelRef, size }) {
+function Teleprompter({ shot, next, recording, levelRef, size, speed }) {
   const words = useMemo(() => (shot.line || '').split(/\s+/).filter(Boolean), [shot.line]);
   const [pos, setPos] = useState(0); // words spoken so far, fractional
   const boxRef = useRef(null);
   const textRef = useRef(null);
   const nowRef = useRef(null);
+  const speedRef = useRef(speed);
+  speedRef.current = speed;
 
   useEffect(() => setPos(0), [shot, recording]);
 
   useEffect(() => {
     if (!recording || !words.length) return;
-    // Pace from the planned length, kept to how fast people actually talk.
-    const planned = Number(shot.duration_seconds) || words.length / 2.5;
-    const rate = Math.min(3.6, Math.max(1.8, words.length / Math.max(1, planned * 0.85)));
+    // Pace from the planned length, kept to how fast people actually talk
+    // (Hinglish runs about 2.5 to 4 words a second).
+    const planned = Number(shot.duration_seconds) || words.length / 3;
+    const rate = Math.min(4.2, Math.max(2.6, words.length / Math.max(1, planned)));
     let last = performance.now();
+    let noiseDb = null; // the room between words: drops at once, creeps up slowly
+    let voicedAt = -Infinity;
     const id = setInterval(() => {
       const now = performance.now();
       const dt = (now - last) / 1000;
       last = now;
       const l = levelRef.current;
-      const voiced = l && l.rmsDb > Math.max(-48, (l.floorDb ?? -70) + 6);
-      if (voiced) setPos((p) => Math.min(words.length, p + rate * dt));
-    }, 100);
+      if (!l) return;
+      noiseDb = noiseDb == null ? Math.min(l.rmsDb, l.floorDb ?? l.rmsDb) : l.rmsDb < noiseDb ? l.rmsDb : noiseDb + 0.5 * dt;
+      if (l.rmsDb > Math.max(-55, noiseDb + 8)) voicedAt = now;
+      if (now - voicedAt < SPEECH_HOLD_MS) setPos((p) => Math.min(words.length, p + rate * speedRef.current * dt));
+    }, 50);
     return () => clearInterval(id);
   }, [recording, shot, words.length, levelRef]);
 
@@ -1030,7 +1058,7 @@ function Teleprompter({ shot, next, recording, levelRef, size }) {
         </p>
       </div>
       {recording && next?.line && <p className="small muted" style={{ marginTop: 6, fontFamily: 'var(--font-body)', fontSize: 13 }}>Next: {next.line.split(/\s+/).slice(0, 5).join(' ')}…</p>}
-      <span className="hint">{recording ? 'Following your voice' : 'Scrolls with your voice · Aa to resize'}</span>
+      <span className="hint">{recording ? `Following your voice · ${speed}×` : `Scrolls with your voice at ${speed}× · Aa to resize`}</span>
     </div>
   );
 }
