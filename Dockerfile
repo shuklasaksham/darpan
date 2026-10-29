@@ -22,6 +22,7 @@ COPY server/package.json server/package-lock.json ./
 RUN npm ci --omit=dev
 COPY server/src ./src
 COPY server/fonts ./fonts
+COPY server/assets ./assets
 COPY --from=app-build /build/app/dist /srv/app/dist
 
 EXPOSE 3000

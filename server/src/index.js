@@ -8,7 +8,7 @@ import { config } from './config.js';
 import { pool, migrate } from './db.js';
 import { extractAudio, extractPoster, extractStrip, probe, ffmpegAvailable } from './ffmpeg.js';
 import { analyzeTake, findFillers, ruleNotes } from './analyze.js';
-import { captionWord, enqueueReel, jobStatus, sweepOldFiles, takesDir, trimFor, warmPiece } from './reels.js';
+import { captionWord, enqueueReel, jobStatus, reelCopy, sweepOldFiles, takesDir, trimFor, warmPiece } from './reels.js';
 import { dailyIdea, pushRouter, startDailyReminders, streakFor } from './daily.js';
 import { authRouter, loadUser, requireUser } from './auth.js';
 import { transcribeFile, transcribeWithWords, TranscribeError } from './transcribe.js';
@@ -750,8 +750,11 @@ app.get('/api/reels/:id/file', requireUser, async (req, res, next) => {
     if (!reel || reel.status !== 'done' || !(await fileExists(reel.file_path))) {
       return res.status(404).json({ error: 'Reel not available' });
     }
-    if (req.query.download) res.attachment(`darpan-reel-${reel.id}.mp4`);
-    res.sendFile(reel.file_path, { headers: { 'Content-Type': 'video/mp4', 'Cache-Control': 'private, max-age=86400, immutable' } });
+    // ?quality=720 asks for the smaller copy (made once, then kept next to the reel).
+    const short = Number(req.query.quality) === 720 ? 720 : null;
+    const file = short ? await reelCopy(reel, short) : reel.file_path;
+    if (req.query.download) res.attachment(`darpan-reel-${reel.id}${short && file !== reel.file_path ? '-720p' : ''}.mp4`);
+    res.sendFile(file, { headers: { 'Content-Type': 'video/mp4', 'Cache-Control': 'private, max-age=86400, immutable' } });
   } catch (err) {
     next(err);
   }

@@ -9,7 +9,7 @@ import { transliterateWord } from './usernames.js';
 
 // Builds a reel from kept takes:
 //   1. each take becomes a "piece": trimmed to its speech, cropped and scaled to
-//      the reel size, captions and the "Shot with Darpan" tag burned in (one
+//      the reel size, captions and the "Shot with darpan" tag burned in (one
 //      encode per take, all with identical settings), then
 //   2. the pieces are joined with ffmpeg's concat demuxer without re-encoding.
 // Pieces are cached next to the take and made in the background as soon as a
@@ -25,10 +25,12 @@ fs.mkdirSync(reelsDir, { recursive: true });
 // Mukta (the app's own type) has Latin and Devanagari, so Hindi captions render too.
 const FONT_DIR = path.join(import.meta.dirname, '..', 'fonts');
 const FONT = 'Mukta';
+// The "Shot with darpan" pill (from the Figma design), laid over the bottom-right corner.
+const TAG_IMAGE = path.join(import.meta.dirname, '..', 'assets', 'tag.png');
 const LEAD_IN = 0.15; // seconds kept before the first word
 const TAIL = 0.4; // and after the last, so nothing sounds clipped
 const FPS = 30;
-const PIECE_VERSION = 4; // bump when the encode settings change, so old pieces aren't reused
+const PIECE_VERSION = 5; // bump when the encode settings change, so old pieces aren't reused
 
 // x264 "veryfast" at CRF 21 looks close to the phone's own recording; the
 // maxrate keeps files small enough to download quickly on mobile data.
@@ -130,7 +132,7 @@ export function takeAspect(take) {
 
 /**
  * The reel's frame for an aspect ratio, fixed per plan so pieces can be made
- * ahead of time: 9:16 is 1080×1920 on Pro (720×1280 on Free), 4:5 1080×1350,
+ * ahead of time: 9:16 is 1080×1920, 4:5 1080×1350,
  * 1:1 1080×1080, 16:9 1920×1080. Dimensions are even, as H.264 needs.
  */
 export function reelSize(aspect, maxLongEdge = 1920) {
@@ -250,13 +252,12 @@ const assText = (t) => t.replace(/\\/g, '\\\\').replace(/[{}]/g, '').replace(/\n
 const HOOK_SECONDS = 2.2;
 
 /**
- * Subtitle file with the captions (lower middle, above Reels' own UI), the tag,
- * and on the reel's first shot the hook: big ink-on-white text in the top third
+ * Subtitle file with the captions (lower middle, above Reels' own UI) and, on
+ * the reel's first shot, the hook: big ink-on-white text in the top third
  * for the first two seconds, the way most Reels open.
  */
-export function assFile({ width, height, duration, chunks, tag = true, hook = null }) {
+export function assFile({ width, height, duration, chunks, hook = null }) {
   const size = Math.round(height * 0.042);
-  const tagSize = Math.round(height * 0.022);
   const hookSize = Math.round(height * 0.054);
   return `[Script Info]
 ScriptType: v4.00+
@@ -268,12 +269,11 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Caption,${FONT},${size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,${Math.max(2, Math.round(size * 0.09))},${Math.round(size * 0.04)},2,${Math.round(width * 0.08)},${Math.round(width * 0.08)},${Math.round(height * 0.3)},1
-Style: Tag,${FONT},${tagSize},&H30FFFFFF,&H000000FF,&H60000000,&H00000000,-1,0,0,0,100,100,1,0,1,${Math.max(1, Math.round(tagSize * 0.08))},0,8,10,10,${Math.round(height * 0.06)},1
 Style: Hook,${FONT},${hookSize},&H000A0A0A,&H000000FF,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,100,0,0,3,${Math.round(hookSize * 0.28)},0,8,${Math.round(width * 0.1)},${Math.round(width * 0.1)},${Math.round(height * 0.17)},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-${tag ? `Dialogue: 0,${assTime(0)},${assTime(duration + 1)},Tag,,0,0,0,,Shot with Darpan\n` : ''}${hook ? `Dialogue: 2,${assTime(0)},${assTime(Math.min(HOOK_SECONDS, duration))},Hook,,0,0,0,,{\\fad(0,250)}${assText(hook)}\n` : ''}${chunks.map((c) => `Dialogue: 1,${assTime(c.start)},${assTime(c.end)},Caption,,0,0,0,,${assText(c.text)}`).join('\n')}
+${hook ? `Dialogue: 2,${assTime(0)},${assTime(Math.min(HOOK_SECONDS, duration))},Hook,,0,0,0,,{\\fad(0,250)}${assText(hook)}\n` : ''}${chunks.map((c) => `Dialogue: 1,${assTime(c.start)},${assTime(c.end)},Caption,,0,0,0,,${assText(c.text)}`).join('\n')}
 `;
 }
 
@@ -303,7 +303,7 @@ const exists = (p) => (p ? fs.promises.access(p).then(() => true, () => false) :
 // hum, traffic) reduced, and the voice brought to Instagram's loudness.
 const AUDIO_CLEANUP = 'highpass=f=80,afftdn=nf=-25:tn=1,loudnorm=I=-14:TP=-1.5:LRA=11';
 
-async function encodePiece({ take, trim, size, assPath, out, onProgress }) {
+async function encodePiece({ take, trim, size, assPath, tag, out, onProgress }) {
   const duration = trim.end - trim.start;
   const { width, height } = size;
   const video = [
@@ -321,11 +321,19 @@ async function encodePiece({ take, trim, size, assPath, out, onProgress }) {
   // re-encoding; a take without sound gets a silent track for the same reason.
   const args = ['-y', '-threads', THREADS, '-ss', trim.start.toFixed(3), '-t', duration.toFixed(3), '-i', take.file_path];
   if (!take.has_audio) args.push('-f', 'lavfi', '-t', duration.toFixed(3), '-i', 'anullsrc=r=48000:cl=stereo');
+  let graph = `[0:v:0]${video}[v]`;
+  if (tag) {
+    // The pill is about a third of the frame wide, inset from the bottom-right corner.
+    const tagIndex = take.has_audio ? 1 : 2;
+    args.push('-i', TAG_IMAGE);
+    const tagWidth = Math.round((width * 0.34) / 2) * 2;
+    graph = `[0:v:0]${video}[base];[${tagIndex}:v]scale=${tagWidth}:-1:flags=lanczos[tag];[base][tag]overlay=x=W-w-${Math.round(width * 0.045)}:y=H-h-${Math.round(height * 0.03)}:format=auto[v]`;
+  }
   args.push(
-    '-map', '0:v:0',
-    '-map', take.has_audio ? '0:a:0' : '1:a:0',
     '-filter_threads', THREADS,
-    '-vf', video,
+    '-filter_complex', graph,
+    '-map', '[v]',
+    '-map', take.has_audio ? '0:a:0' : '1:a:0',
     ...(take.has_audio ? ['-af', AUDIO_CLEANUP] : []),
     '-c:v', 'libx264', '-preset', PRESET, '-crf', '21', '-maxrate', `${maxrate}k`, '-bufsize', `${maxrate * 2}k`,
     '-profile:v', 'high', '-pix_fmt', 'yuv420p',
@@ -374,10 +382,10 @@ export async function ensurePiece(take, { captions = true, tag = true, size, hoo
     entry = { listeners: new Set() };
     entry.task = schedule(async () => {
       const tmp = `${out}.part.mp4`;
-      const assPath = chunks.length || tag || hook ? `${out}.ass` : null;
+      const assPath = chunks.length || hook ? `${out}.ass` : null;
       try {
-        if (assPath) await fs.promises.writeFile(assPath, assFile({ ...size, duration: trim.end - trim.start, chunks, tag, hook }));
-        await encodePiece({ take, trim, size, assPath, out: tmp, onProgress: (p) => entry.listeners.forEach((fn) => fn(p)) });
+        if (assPath) await fs.promises.writeFile(assPath, assFile({ ...size, duration: trim.end - trim.start, chunks, hook }));
+        await encodePiece({ take, trim, size, assPath, tag, out: tmp, onProgress: (p) => entry.listeners.forEach((fn) => fn(p)) });
         await fs.promises.rename(tmp, out);
         // Older pieces of this take (before an edit) won't be used again, unless one was asked for just now.
         const prefix = `${take.id}.piece-`;
@@ -417,6 +425,44 @@ export function warmPiece(take, plan, hook = null) {
   ensurePiece(take, { captions: true, tag: plan.tag !== false, size, hook }).catch((err) => {
     if (!err.missing) console.error(`Pre-render of take ${take.id} failed:`, err.message);
   });
+}
+
+// --- Download sizes -----------------------------------------------------------
+
+const copies = new Map(); // copy path -> promise
+
+/**
+ * A finished reel at a smaller size for saving to the phone: the short edge
+ * scaled to `short` (720 makes 9:16 into 720×1280). Made once, next to the
+ * reel; a reel already that small comes back as it is.
+ */
+export async function reelCopy(reel, short) {
+  const scale = short / Math.min(reel.width, reel.height);
+  if (!(scale < 1)) return reel.file_path;
+  const out = path.join(path.dirname(reel.file_path), `reel-${short}p.mp4`);
+  if (await exists(out)) return out;
+  if (!copies.has(out)) {
+    const even = (n) => Math.max(2, Math.round(n / 2) * 2);
+    const tmp = `${out}.part.mp4`;
+    const run = async () => {
+      try {
+        await ffmpeg([
+          '-y', '-threads', THREADS, '-i', reel.file_path,
+          '-vf', `scale=${even(reel.width * scale)}:${even(reel.height * scale)}:flags=lanczos`,
+          '-c:v', 'libx264', '-preset', PRESET, '-crf', '21', '-maxrate', '3500k', '-bufsize', '7000k',
+          '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-threads', THREADS,
+          '-c:a', 'copy', '-movflags', '+faststart', tmp,
+        ]);
+        await fs.promises.rename(tmp, out);
+        return out;
+      } finally {
+        await fs.promises.rm(tmp, { force: true }).catch(() => {});
+        copies.delete(out);
+      }
+    };
+    copies.set(out, schedule(run, 'low').promise);
+  }
+  return copies.get(out);
 }
 
 // --- The job ---------------------------------------------------------------
@@ -477,6 +523,8 @@ async function buildReel(reel, job) {
     job.progress = 1;
     job.stage = 'Your reel is ready';
     await setStatus('done', { filePath, ...size, duration: total });
+    // Have the smaller copy ready before anyone asks to save it.
+    reelCopy({ id: reel.id, file_path: filePath, ...size }, 720).catch((err) => console.error(`720p copy of reel ${reel.id} failed:`, err.message));
   } catch (err) {
     console.error(`Reel ${reel.id} failed:`, err.message);
     job.stage = 'Something went wrong';
