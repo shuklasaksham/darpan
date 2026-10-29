@@ -69,13 +69,13 @@ export default function Account({ user, shoots, onLogOut, onUserChange }) {
             )}
           </div>
           {pro ? (
-            <p className="muted">Unlimited reels in 1080p with no tag, until {shortDate(billing.proUntil)}. No auto-renewal.</p>
+            <p className="muted">Unlimited reels with no tag, until {shortDate(billing.proUntil)}. No auto-renewal.</p>
           ) : (
             <>
               <div className="meter" role="progressbar" aria-valuemin={0} aria-valuemax={allowed} aria-valuenow={used}>
                 <i style={{ width: `${Math.min(100, (used / allowed) * 100)}%` }} />
               </div>
-              <p className="muted small">Resets on {resetDate()}. Pro: unlimited reels, 1080p, no tag.</p>
+              <p className="muted small">Resets on {resetDate()}. Pro: unlimited reels, no tag.</p>
               <button className="brand block" onClick={() => setPaywall(true)}>
                 Go Pro · ₹{billing.priceRupees} for 30 days
               </button>

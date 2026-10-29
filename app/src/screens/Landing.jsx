@@ -13,8 +13,8 @@ export function LegalFooter() {
   );
 }
 
-const FREE = ['3 reels a month', 'Scripts for your niche and trends', 'Live camera coach', "Director's notes on every take", '720p with the “Shot with Darpan” tag'];
-const PRO = ['Unlimited reels for 30 days', 'Everything in Free', 'Full HD 1080p', 'No tag on your reels', 'Priority rendering'];
+const FREE = ['3 reels a month', 'Scripts for your niche and trends', 'Live camera coach', "Director's notes on every take", 'Full HD 1080p, with a small “Shot with darpan” tag'];
+const PRO = ['Unlimited reels for 30 days', 'Everything in Free', 'No tag on your reels', 'Priority rendering'];
 
 const HOW = [
   ['Say your idea', "Type it or say it in Hinglish. Darpan writes a short script for your niche and what's trending."],

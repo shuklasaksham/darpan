@@ -71,8 +71,8 @@ export function useBilling() {
 }
 
 /**
- * Pro, sold on what the creator gets: their own frame as Free (720p, tagged)
- * next to Pro (1080p, clean), then the price.
+ * Pro, sold on what the creator gets: their own frame as Free (with our tag)
+ * next to Pro (clean), then the price.
  */
 export function Paywall({ billing, reason = 'upgrade', posterSrc = null, onClose }) {
   const [busy, setBusy] = useState(false);
@@ -96,17 +96,17 @@ export function Paywall({ billing, reason = 'upgrade', posterSrc = null, onClose
                 Shot with <Wordmark className="inline-mark" />
               </span>
             </Poster>
-            <figcaption>Free · 720p</figcaption>
+            <figcaption>Free · with our tag</figcaption>
           </figure>
           <figure className="pro">
             <Poster src={posterSrc} />
-            <figcaption>Pro · 1080p</figcaption>
+            <figcaption>Pro · no tag</figcaption>
           </figure>
         </div>
         <div className="stack">
           <h1>{limit ? `Your ${billing?.reelsPerMonth ?? 3} free reels are used up` : 'Make every reel look pro'}</h1>
           <p className="muted" style={{ fontSize: 17 }}>
-            {limit ? 'Go Pro to make this reel now, and every reel after it for 30 days.' : 'Unlimited reels in full HD for 30 days, without our tag.'}
+            {limit ? 'Go Pro to make this reel now, and every reel after it for 30 days.' : 'Unlimited reels for 30 days, without our tag.'}
           </p>
         </div>
         <ul className="checks">
@@ -114,7 +114,7 @@ export function Paywall({ billing, reason = 'upgrade', posterSrc = null, onClose
             <Glyph name="check" size={20} /> Unlimited reels until {shortDate(until)}
           </li>
           <li>
-            <Glyph name="check" size={20} /> Full 1080p, no “Shot with Darpan” tag
+            <Glyph name="check" size={20} /> No “Shot with darpan” tag on your reels
           </li>
           <li>
             <Glyph name="check" size={20} /> Same scripts, live coaching and notes
@@ -204,7 +204,7 @@ export function BillingNotice({ status, onDone }) {
           </span>
           <h1 className="display" style={{ fontSize: 56 }}>You’re on Pro</h1>
           <p className="muted" style={{ fontSize: 18 }}>
-            Unlimited reels in 1080p with no tag{billing?.proUntil ? `, until ${shortDate(billing.proUntil)}` : ''}. It doesn’t renew by itself.
+            Unlimited reels with no tag{billing?.proUntil ? `, until ${shortDate(billing.proUntil)}` : ''}. It doesn’t renew by itself.
           </p>
         </div>
         <div className="action-bar">

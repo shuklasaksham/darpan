@@ -9,8 +9,9 @@ import { requireUser } from './auth.js';
 // Pro is a 30-day pass (₹299); paying again extends it. Auto-renewing
 // subscriptions need Pine Labs' UPI Autopay/mandates, a separate integration.
 
+// Both plans render in full HD; Pro adds unlimited reels and no tag.
 export const PLANS = {
-  free: { reelsPerMonth: 3, maxLongEdge: 1280, tag: true },
+  free: { reelsPerMonth: 3, maxLongEdge: 1920, tag: true },
   pro: { reelsPerMonth: Infinity, maxLongEdge: 1920, tag: false },
 };
 const PRO_DAYS = 30;
