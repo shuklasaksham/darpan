@@ -18,7 +18,9 @@ const LIGHT_IDS = new Set(['backlight', 'face_dark', 'face_bright', 'room_dark']
 const TIP_GLYPHS = { backlight: 'light', face_dark: 'light', face_bright: 'light', room_dark: 'light', claude_light: 'light' };
 const TIMERS = [3, 10, 0]; // countdown seconds; 0 records straight away
 const TICK_MS = 200;
-const TICK_RECORDING_MS = 400;
+// While recording, the checks run once a second: reading big camera frames any
+// more often makes the phone drop frames from the take itself.
+const TICK_RECORDING_MS = 1000;
 const DETECT_EDGE = 360; // long edge of the frame the models see
 const LIGHT_EDGE = 240;
 // Takes are recorded straight from the camera at its full resolution (up to 4K).

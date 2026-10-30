@@ -30,7 +30,7 @@ const TAG_IMAGE = path.join(import.meta.dirname, '..', 'assets', 'tag.png');
 const LEAD_IN = 0.15; // seconds kept before the first word
 const TAIL = 0.4; // and after the last, so nothing sounds clipped
 const FPS = 30;
-const PIECE_VERSION = 5; // bump when the encode settings change, so old pieces aren't reused
+const PIECE_VERSION = 6; // bump when the encode settings change, so old pieces aren't reused
 
 // x264 "veryfast" at CRF 21 looks close to the phone's own recording; the
 // maxrate keeps files small enough to download quickly on mobile data.
@@ -321,16 +321,33 @@ const exists = (p) => (p ? fs.promises.access(p).then(() => true, () => false) :
 // hum, traffic) reduced, and the voice brought to Instagram's loudness.
 const AUDIO_CLEANUP = 'highpass=f=80,afftdn=nf=-25:tn=1,loudnorm=I=-14:TP=-1.5:LRA=11';
 
+/** A piece is a whole number of frames long, and its sound exactly as long. */
+const pieceFrames = (trim) => Math.max(1, Math.round((trim.end - trim.start) * FPS));
+const pieceSamples = (trim) => Math.round((pieceFrames(trim) / FPS) * 48000);
+
 async function encodePiece({ take, trim, size, assPath, tag, out, onProgress }) {
   const duration = trim.end - trim.start;
   const { width, height } = size;
+  // The piece is a whole number of frames, and its sound exactly that long, so
+  // joined pieces never drift: a phone's sound often starts late or ends early.
+  const frames = pieceFrames(trim);
+  const samples = pieceSamples(trim);
   const video = [
     // Crop from the centre to the reel's shape, as the camera preview showed it.
     `scale=${width}:${height}:force_original_aspect_ratio=increase:flags=lanczos`,
     `crop=${width}:${height}`,
     'setsar=1',
-    `fps=${FPS}`,
+    `fps=${FPS}:start_time=0`,
+    'tpad=stop_mode=clone:stop_duration=1',
+    `trim=end_frame=${frames}`,
     ...(assPath ? [`subtitles=filename='${filterPath(assPath)}':fontsdir='${filterPath(FONT_DIR)}'`] : []),
+  ].join(',');
+  // Gaps in the phone's sound filled with silence, so every word stays on its frame.
+  const audio = [
+    'aresample=48000:async=1:first_pts=0',
+    ...(take.has_audio ? [AUDIO_CLEANUP, 'aresample=48000'] : []),
+    'apad',
+    `atrim=end_sample=${samples}`,
   ].join(',');
   const maxrate = maxrateFor(width, height);
 
@@ -338,20 +355,22 @@ async function encodePiece({ take, trim, size, assPath, tag, out, onProgress }) 
   // re-encoding; a take without sound gets a silent track for the same reason.
   const args = ['-y', '-threads', THREADS, '-ss', trim.start.toFixed(3), '-t', duration.toFixed(3), '-i', take.file_path];
   if (!take.has_audio) args.push('-f', 'lavfi', '-t', duration.toFixed(3), '-i', 'anullsrc=r=48000:cl=stereo');
-  let graph = `[0:v:0]${video}[v]`;
+  const audioIn = take.has_audio ? '0:a:0' : '1:a:0';
+  let graph = `[0:v:0]${video}[v];[${audioIn}]${audio}[a]`;
   if (tag) {
-    // The pill is about a third of the frame wide, inset from the bottom-right corner.
+    // The pill is sized from the frame's height, like the captions, so it keeps
+    // the same size next to them in every shape: a third of the width in 9:16,
+    // about a ninth in 16:9. Inset from the bottom-right corner.
     const tagIndex = take.has_audio ? 1 : 2;
     args.push('-i', TAG_IMAGE);
-    const tagWidth = Math.round((width * 0.34) / 2) * 2;
-    graph = `[0:v:0]${video}[base];[${tagIndex}:v]scale=${tagWidth}:-1:flags=lanczos[tag];[base][tag]overlay=x=W-w-${Math.round(width * 0.045)}:y=H-h-${Math.round(height * 0.03)}:format=auto[v]`;
+    const tagWidth = Math.round((height * 0.19) / 2) * 2;
+    graph = `[0:v:0]${video}[base];[${tagIndex}:v]scale=${tagWidth}:-1:flags=lanczos[tag];[base][tag]overlay=x=W-w-${Math.round(height * 0.025)}:y=H-h-${Math.round(height * 0.03)}:format=auto[v];[${audioIn}]${audio}[a]`;
   }
   args.push(
     '-filter_threads', THREADS,
     '-filter_complex', graph,
     '-map', '[v]',
-    '-map', take.has_audio ? '0:a:0' : '1:a:0',
-    ...(take.has_audio ? ['-af', AUDIO_CLEANUP] : []),
+    '-map', '[a]',
     '-c:v', 'libx264', '-preset', PRESET, '-crf', '21', '-maxrate', `${maxrate}k`, '-bufsize', `${maxrate * 2}k`,
     '-profile:v', 'high', '-pix_fmt', 'yuv420p',
     '-r', String(FPS), '-g', String(FPS * 2), '-threads', THREADS, '-x264-params', 'rc-lookahead=10',
@@ -534,10 +553,29 @@ async function buildReel(reel, job) {
 
     job.stage = 'Joining the shots';
     const list = path.join(dir, 'pieces.txt');
-    await fs.promises.writeFile(list, results.map((p) => `file '${p.out.replace(/'/g, "'\\''")}'`).join('\n'));
+    // Each piece's exact length, so the next one starts on the right frame.
+    await fs.promises.writeFile(
+      list,
+      results.map((p) => `file '${p.out.replace(/'/g, "'\\''")}'\nduration ${(pieceFrames(p.trim) / FPS).toFixed(6)}`).join('\n'),
+    );
     const filePath = path.join(dir, 'reel.mp4');
+    // The picture is copied; the sound is cut to each piece's exact length and
+    // encoded once for the whole reel. Copied end to end, each piece's sound brings
+    // its encoder padding along, and players that play the samples back to back
+    // fall a little further behind every shot.
+    const audioGraph =
+      results.map((p, i) => `[${i + 1}:a]atrim=end_sample=${pieceSamples(p.trim)},asetpts=N/SR/TB[a${i}]`).join(';') +
+      `;${results.map((_, i) => `[a${i}]`).join('')}concat=n=${results.length}:v=0:a=1[a]`;
     await schedule(
-      () => ffmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', filePath]),
+      () =>
+        ffmpeg([
+          '-y', '-f', 'concat', '-safe', '0', '-i', list,
+          ...results.flatMap((p) => ['-i', p.out]),
+          '-filter_complex', audioGraph,
+          '-map', '0:v', '-map', '[a]', '-c:v', 'copy',
+          '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2',
+          '-movflags', '+faststart', filePath,
+        ]),
       'high',
     ).promise;
 
