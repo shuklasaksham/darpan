@@ -11,6 +11,24 @@ const MAX_SAYS = 2; // rule 8: said twice and still ignored, stop repeating it
 const FIXED_MS = 1500; // gone this long counts as fixed (rule 5, the other way round)
 const PRAISE_SHOW_MS = 2000;
 
+// The order the voice goes round, one tip per stop, then round again: so no one
+// thing (a tilt, say) takes over. A stop with nothing to fix is skipped. Within
+// a stop, the standards' order picks the tip.
+export const LOOP = ['background', 'light', 'frame', 'sound'];
+const STOP = {
+  background: 'background',
+  outfit: 'background',
+  light: 'light',
+  orientation: 'frame',
+  steady: 'frame',
+  framing: 'frame',
+  angle: 'frame',
+  lens: 'frame',
+  sound: 'sound',
+  delivery: 'sound',
+};
+export const stopFor = (id) => STOP[CHECKS[id]?.area] ?? 'frame';
+
 /**
  * One coach per camera session. Each tick, `update` gets the failing checks
  * ({ id, fill? }) and returns what to show; it speaks through the Speaker.
@@ -33,6 +51,7 @@ export class Coach {
     this.allPassSaid = false;
     this.lastPraiseAt = -Infinity;
     this.lastSaidAt = -Infinity;
+    this.turn = 0; // the next stop in LOOP
   }
 
   /** Tips the creator didn't act on after hearing them twice (rule 8). */
@@ -68,24 +87,30 @@ export class Coach {
       this.say(line, now);
     }
 
-    // Candidates: lasted 1.5 s and allowed now, highest first. Tips given up on
-    // (rule 8) are only shown, quietly, when nothing else is left.
+    // Candidates: lasted 1.5 s and allowed now, in the standards' order. Tips
+    // given up on (rule 8) are only shown, quietly, when nothing else is left.
     const lasting = [...failing.values()]
       .filter((p) => now - this.since.get(p.id) >= PERSIST_MS)
       .filter((p) => !recording || CHECKS[p.id].tag === 'recording')
       .sort((a, b) => rank(a.id) - rank(b.id));
     const candidates = lasting.filter((p) => !this.ignored.has(p.id));
 
-    // Rule 6: the tip on screen stays at least 2 s unless it was fixed.
-    let top = candidates[0] ?? null;
-    if (this.shown && top?.id !== this.shown.id && now - this.shown.at < MIN_SHOW_MS && failing.has(this.shown.id)) {
-      top = failing.get(this.shown.id);
+    if (recording) {
+      // Rule 10: while recording, speak only when the take is being ruined.
+      const top = candidates[0] ?? null;
+      this.show(top, now, failing);
+      if (top && !quiet && CHECKS[top.id].ruin && this.canSpeak(now)) this.tell(top, now, language);
+    } else if (!quiet && this.canSpeak(now)) {
+      // Between takes: the next stop in the loop that has something to say.
+      const next = this.nextInLoop(candidates, now, language);
+      if (next) this.tell(next, now, language);
     }
-    if (top && top.id !== this.shown?.id) this.shown = { id: top.id, at: now };
-    if (!top) this.shown = null;
-
-    // Rule 10: while recording, speak only when the take is being ruined.
-    if (top && !quiet && !CHECKS[top.id].silent && (!recording || CHECKS[top.id].ruin)) this.maybeSay(top, now, language);
+    if (!recording) {
+      // On screen: the tip just said while it still needs fixing, else what comes next.
+      const said = this.shown && failing.get(this.shown.id);
+      this.show(said && !this.ignored.has(said.id) ? said : this.peek(candidates), now, failing);
+    }
+    const top = this.shown && failing.get(this.shown.id);
 
     // Section 6: every check passes: say the final line once.
     if (!recording && failing.size === 0 && !quiet) {
@@ -107,19 +132,60 @@ export class Coach {
     return null;
   }
 
-  maybeSay(problem, now, language) {
+  /** Rule 6: a tip stays on screen at least 2 s unless it was fixed. */
+  show(problem, now, failing) {
+    if (this.shown && problem?.id !== this.shown.id && now - this.shown.at < MIN_SHOW_MS && failing.has(this.shown.id)) return;
+    if (!problem) this.shown = null;
+    else if (problem.id !== this.shown?.id) this.shown = { id: problem.id, at: now };
+  }
+
+  /** The speaker is free and the creator has had time to act on the last tip. */
+  canSpeak(now) {
     const speaker = this.speaker;
-    if (!speaker || speaker.muted || speaker.speaking) return;
-    if (now - Math.max(this.lastSaidAt, speaker.lastAt) < ACT_MS) return;
+    if (!speaker || speaker.muted || speaker.speaking) return false;
+    return now - Math.max(this.lastSaidAt, speaker.lastAt) >= ACT_MS;
+  }
+
+  /** Can this tip be said now? Said twice already and still failing: given up (rule 8). */
+  sayable(problem, now, language) {
+    if (CHECKS[problem.id].silent) return false;
     const said = this.said.get(problem.id) ?? { count: 0, at: -Infinity };
-    if (now - said.at < REPEAT_MS) return;
-    const line = lineFor(problem.id, language, problem.fill);
+    if (now - said.at < REPEAT_MS) return false;
     if (said.count >= MAX_SAYS) {
-      this.ignored.set(problem.id, line.text);
-      return;
+      this.ignored.set(problem.id, lineFor(problem.id, language, problem.fill).text);
+      return false;
     }
+    return true;
+  }
+
+  /** Going round LOOP from the next stop: the first stop with a tip to say. */
+  nextInLoop(candidates, now, language) {
+    for (let i = 0; i < LOOP.length; i++) {
+      const stop = (this.turn + i) % LOOP.length;
+      const tip = candidates.find((p) => stopFor(p.id) === LOOP[stop] && this.sayable(p, now, language));
+      if (tip) {
+        this.turn = (stop + 1) % LOOP.length;
+        return tip;
+      }
+    }
+    return null;
+  }
+
+  /** What the loop will come to next, for the screen (silent tips included). */
+  peek(candidates) {
+    for (let i = 0; i < LOOP.length; i++) {
+      const tip = candidates.find((p) => stopFor(p.id) === LOOP[(this.turn + i) % LOOP.length]);
+      if (tip) return tip;
+    }
+    return null;
+  }
+
+  tell(problem, now, language) {
+    const said = this.said.get(problem.id) ?? { count: 0, at: -Infinity };
+    if (now - said.at < REPEAT_MS || said.count >= MAX_SAYS) return;
     this.said.set(problem.id, { count: said.count + 1, at: now });
-    this.say(line, now);
+    this.shown = { id: problem.id, at: now };
+    this.say(lineFor(problem.id, language, problem.fill), now);
   }
 
   say(line, now) {

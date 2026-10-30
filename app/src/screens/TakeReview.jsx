@@ -26,20 +26,35 @@ export default function TakeReview({ take, shot, shotIndex, isLast, speaker, lan
     return () => window.removeEventListener('online', onRetry);
   }, [take.status, onRetry]);
 
+  // Play the take as soon as the screen opens, while the score loads. React
+  // sets `muted` after the element exists, so phones (iPhones especially) can
+  // refuse `autoPlay`: start it here, muted unless sound was asked for.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.muted = !withSound;
+    v.play().catch(() => {});
+  }, [take.url, withSound]);
+
   const label = `Shot ${shotIndex + 1}${shot?.title ? ` · ${shot.title}` : ''}`;
   const takeLabel = result?.takeNumber ? `Take ${result.takeNumber}` : null;
 
   return (
     <div className="review studio" role="dialog" aria-modal="true" aria-label="Your take">
       <div className="review-media">
-        <video ref={videoRef} src={take.url} playsInline autoPlay muted={!withSound} loop />
-        {!withSound && take.status === 'done' && (
+        <video ref={videoRef} src={take.url} playsInline autoPlay muted loop />
+        {!withSound && (
           <button
             className="icon-btn ink play-center"
             onClick={() => {
+              const v = videoRef.current;
               setWithSound(true);
               setMode('read');
-              if (videoRef.current) videoRef.current.currentTime = 0;
+              if (v) {
+                v.currentTime = 0;
+                v.muted = false;
+                v.play().catch(() => {});
+              }
             }}
             aria-label="Play with sound"
             style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: 56, height: 56, background: 'rgb(10 10 10 / 0.6)', color: '#fff' }}
