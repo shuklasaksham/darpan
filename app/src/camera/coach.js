@@ -1,59 +1,131 @@
-// Turns raw check results into one tip at a time, on screen and out loud.
+// Turns raw check results into one tip at a time, on screen and out loud,
+// following "How Darpan speaks" in the Shooting Standards.
 
-// priority: lower wins. en / hinglish are shown; en / hi are spoken (Hindi and
-// Hinglish users hear Devanagari, which Indian TTS voices read naturally).
-export const TIPS = {
-  no_face: { priority: 1, en: "Can't see you. Come into the frame", hinglish: 'Aap dikh nahi rahe. Frame mein aao', hi: 'आप दिख नहीं रहे। फ़्रेम में आओ' },
-  no_body: { priority: 1, en: 'Step back a bit, I need all of you', hinglish: 'Thoda peeche jao, poore dikhne chahiye', hi: 'थोड़ा पीछे जाओ, पूरे दिखने चाहिए' },
-  raise_phone: { priority: 2, en: 'Phone a little higher', hinglish: 'Phone thoda upar karo', hi: 'फ़ोन थोड़ा ऊपर करो' },
-  lower_phone: { priority: 2, en: 'Phone a little lower', hinglish: 'Phone thoda neeche karo', hi: 'फ़ोन थोड़ा नीचे करो' },
-  show_feet: { priority: 2, en: 'Step back till your feet show', hinglish: 'Peeche jao, pair bhi dikhne chahiye', hi: 'पीछे जाओ, पैर भी दिखने चाहिए' },
-  come_closer: { priority: 3, en: 'Come a little closer', hinglish: 'Thoda paas aao', hi: 'थोड़ा पास आओ' },
-  move_back: { priority: 3, en: 'Go back a little', hinglish: 'Thoda peeche jao', hi: 'थोड़ा पीछे जाओ' },
-  step_left: { priority: 4, en: 'A little to your left', hinglish: 'Thoda apne left ko', hi: 'थोड़ा अपने बाएँ को' },
-  step_right: { priority: 4, en: 'A little to your right', hinglish: 'Thoda apne right ko', hi: 'थोड़ा अपने दाएँ को' },
-  backlight: { priority: 5, en: 'Light is behind you. Turn and face it', hinglish: 'Light peeche hai. Uski taraf ghumo', hi: 'रोशनी पीछे है। उसकी तरफ़ घूमो' },
-  face_dark: { priority: 5, en: 'Too dark. Face a window or a lamp', hinglish: 'Chehra dark hai. Window ki taraf ghumo', hi: 'चेहरा अँधेरे में है। खिड़की की तरफ़ घूमो' },
-  face_bright: { priority: 5, en: 'Too bright on your face. Step away a bit', hinglish: 'Chehre pe light zyada hai. Thoda hato', hi: 'चेहरे पर रोशनी ज़्यादा है। थोड़ा हटो' },
-  room_dark: { priority: 5, en: "It's dark in here. Switch on a light", hinglish: 'Andhera hai. Light jala lo', hi: 'अँधेरा है। लाइट जला लो' },
-  mic_silent: { priority: 6, en: "Can't hear the mic", hinglish: 'Mic se awaaz nahi aa rahi', hi: 'माइक से आवाज़ नहीं आ रही' },
-  too_loud: { priority: 7, en: 'Too loud. Hold the phone further away', hinglish: 'Bahut loud hai. Phone thoda door rakho', hi: 'बहुत तेज़ है। फ़ोन थोड़ा दूर रखो' },
-  noisy: { priority: 7, en: 'Bit noisy here. Find a quieter spot', hinglish: 'Shor hai. Koi shaant jagah dhoondho', hi: 'शोर है। कोई शांत जगह ढूँढो' },
-  blurry: { priority: 8, en: 'Looks blurry. Wipe the lens', hinglish: 'Blurry hai. Lens saaf kar lo', hi: 'धुँधला है। लेंस साफ़ कर लो' },
-};
+import { CHECKS, lineFor, rank } from './standards.js';
 
-export const PERSIST_MS = 1500;
-const MIN_GAP_MS = 2500; // between any two spoken tips
-const REPEAT_MS = 9000; // before repeating the same tip
+export const PERSIST_MS = 1500; // rule 5: a problem must last this long before a tip
+const MIN_SHOW_MS = 2000; // rule 6: a tip stays on screen at least this long
+const ACT_MS = 3000; // rule 6: after a spoken tip, give the creator this long to act
+const REPEAT_MS = 9000; // before the same tip is said a second time
+const MAX_SAYS = 2; // rule 8: said twice and still ignored, stop repeating it
+const FIXED_MS = 1500; // gone this long counts as fixed (rule 5, the other way round)
+const PRAISE_SHOW_MS = 2000;
 
-/** Shown text and spoken text + language for a tip, in the creator's language. */
-export function tipText(problem, language) {
-  if (problem.text) return problem; // Claude's tips arrive already written
-  const tip = TIPS[problem.id];
-  if (!tip) return { text: problem.id, spoken: problem.id, languageCode: 'en-IN' };
-  if (language === 'English') return { text: tip.en, spoken: tip.en, languageCode: 'en-IN' };
-  return { text: language === 'Hindi' ? tip.hi : tip.hinglish, spoken: tip.hi, languageCode: 'hi-IN' };
-}
-
-/** Tracks how long each problem has lasted; only ones past PERSIST_MS count. */
-export class ProblemTracker {
-  constructor() {
-    this.since = new Map();
+/**
+ * One coach per camera session. Each tick, `update` gets the failing checks
+ * ({ id, fill? }) and returns what to show; it speaks through the Speaker.
+ */
+export class Coach {
+  constructor(speaker) {
+    this.speaker = speaker;
+    this.reset();
   }
 
-  update(problems, now) {
-    const present = new Map(problems.map((p) => [p.id, p]));
-    for (const id of this.since.keys()) if (!present.has(id)) this.since.delete(id);
-    for (const id of present.keys()) if (!this.since.has(id)) this.since.set(id, now);
-    const active = problems
+  /** New shot, or back from a take: forget what was said. */
+  reset() {
+    this.since = new Map(); // id -> first seen
+    this.gone = new Map(); // id -> first not seen (for praise)
+    this.said = new Map(); // id -> { count, at }
+    this.ignored = new Map(); // id -> shown text, for the notes after the take
+    this.shown = null; // { id, at, text }
+    this.praise = null; // { id, text, until }
+    this.allPassSaid = false;
+    this.lastPraiseAt = -Infinity;
+    this.lastSaidAt = -Infinity;
+  }
+
+  /** Tips the creator didn't act on after hearing them twice (rule 8). */
+  ignoredTips() {
+    return [...this.ignored].map(([id, text]) => ({ id, text }));
+  }
+
+  update(problems, { now, recording, language, quiet = false }) {
+    const failing = new Map();
+    for (const p of problems) if (CHECKS[p.id] && !failing.has(p.id)) failing.set(p.id, p);
+
+    for (const id of [...this.since.keys()]) {
+      if (!failing.has(id)) {
+        this.since.delete(id);
+        if (this.said.has(id) && !this.gone.has(id)) this.gone.set(id, now);
+      }
+    }
+    for (const id of failing.keys()) {
+      if (!this.since.has(id)) this.since.set(id, now);
+      this.gone.delete(id);
+    }
+
+    // Rule 7: once a tip the creator heard is fixed, praise it once.
+    for (const [id, at] of [...this.gone]) {
+      if (now - at < FIXED_MS) continue;
+      this.gone.delete(id);
+      this.said.delete(id);
+      this.ignored.delete(id);
+      if (recording || !CHECKS[id].praise) continue;
+      const line = lineFor(id, language, null, 'praise');
+      this.praise = { id, text: line.text, until: now + PRAISE_SHOW_MS };
+      this.lastPraiseAt = now;
+      this.say(line, now);
+    }
+
+    // Candidates: lasted 1.5 s and allowed now, highest first. Tips given up on
+    // (rule 8) are only shown, quietly, when nothing else is left.
+    const lasting = [...failing.values()]
       .filter((p) => now - this.since.get(p.id) >= PERSIST_MS)
-      .sort((a, b) => (a.priority ?? TIPS[a.id]?.priority ?? 9) - (b.priority ?? TIPS[b.id]?.priority ?? 9));
-    return { active, ages: Object.fromEntries([...this.since].map(([id, t]) => [id, now - t])) };
+      .filter((p) => !recording || CHECKS[p.id].tag === 'recording')
+      .sort((a, b) => rank(a.id) - rank(b.id));
+    const candidates = lasting.filter((p) => !this.ignored.has(p.id));
+
+    // Rule 6: the tip on screen stays at least 2 s unless it was fixed.
+    let top = candidates[0] ?? null;
+    if (this.shown && top?.id !== this.shown.id && now - this.shown.at < MIN_SHOW_MS && failing.has(this.shown.id)) {
+      top = failing.get(this.shown.id);
+    }
+    if (top && top.id !== this.shown?.id) this.shown = { id: top.id, at: now };
+    if (!top) this.shown = null;
+
+    // Rule 10: while recording, speak only when the take is being ruined.
+    if (top && !quiet && !CHECKS[top.id].silent && (!recording || CHECKS[top.id].ruin)) this.maybeSay(top, now, language);
+
+    // Section 6: every check passes: say the final line once.
+    if (!recording && failing.size === 0 && !quiet) {
+      this.allSince ??= now;
+      if (!this.allPassSaid && now - this.allSince >= PERSIST_MS) {
+        this.allPassSaid = true;
+        // Right after a praise line, "Perfect" again would be one line too many.
+        if (now - this.lastPraiseAt > 4000) this.say(lineFor('ALL', language, null, 'praise'), now);
+      }
+    } else {
+      this.allSince = null;
+    }
+
+    if (this.praise && now < this.praise.until) return { praise: true, id: this.praise.id, text: this.praise.text };
+    this.praise = null;
+    if (top) return { id: top.id, text: lineFor(top.id, language, top.fill).text, quiet: recording && !CHECKS[top.id].ruin };
+    const given = lasting[0];
+    if (given) return { id: given.id, text: lineFor(given.id, language, given.fill).text, quiet: true };
+    return null;
   }
 
-  /** How long a problem has been present (0 if not). */
-  age(id, now) {
-    return this.since.has(id) ? now - this.since.get(id) : 0;
+  maybeSay(problem, now, language) {
+    const speaker = this.speaker;
+    if (!speaker || speaker.muted || speaker.speaking) return;
+    if (now - Math.max(this.lastSaidAt, speaker.lastAt) < ACT_MS) return;
+    const said = this.said.get(problem.id) ?? { count: 0, at: -Infinity };
+    if (now - said.at < REPEAT_MS) return;
+    const line = lineFor(problem.id, language, problem.fill);
+    if (said.count >= MAX_SAYS) {
+      this.ignored.set(problem.id, line.text);
+      return;
+    }
+    this.said.set(problem.id, { count: said.count + 1, at: now });
+    this.say(line, now);
+  }
+
+  say(line, now) {
+    if (!line || !this.speaker || this.speaker.muted) return;
+    this.lastSaidAt = now;
+    this.speaker.stop();
+    this.speaker.say(line.spoken, line.languageCode);
   }
 }
 
@@ -83,17 +155,6 @@ export class Speaker {
     this.audio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
     this.audio.play().catch(() => {});
     if ('speechSynthesis' in window) speechSynthesis.speak(new SpeechSynthesisUtterance(''));
-  }
-
-  /** Speaks if nothing else is playing and this tip hasn't just been said. */
-  maybeSay(id, { spoken, languageCode }, now) {
-    if (this.muted || this.speaking) return false;
-    if (now - this.lastAt < MIN_GAP_MS) return false;
-    if (now - (this.lastById.get(id) ?? -Infinity) < REPEAT_MS) return false;
-    this.lastAt = now;
-    this.lastById.set(id, now);
-    this.say(spoken, languageCode);
-    return true;
   }
 
   async say(text, languageCode) {

@@ -287,7 +287,7 @@ app.put('/api/plans/:id', requireUser, async (req, res, next) => {
 });
 
 app.post('/api/frame-check', requireUser, limits.frameCheck, async (req, res, next) => {
-  const { image, planId, shotIndex, metrics, language } = req.body ?? {};
+  const { image, planId, shotIndex, metrics, aspect } = req.body ?? {};
   const imageBase64 = typeof image === 'string' ? image.replace(/^data:image\/jpeg;base64,/, '') : '';
   if (!imageBase64 || imageBase64.length > 700_000) {
     return res.status(400).json({ error: 'Send one JPEG frame under 500 KB' });
@@ -300,7 +300,7 @@ app.post('/api/frame-check', requireUser, limits.frameCheck, async (req, res, ne
   try {
     const script = await loadPlan(planId, req.user.id);
     const shot = script?.shots?.[Number(shotIndex)] ?? null;
-    res.json(await checkFrame({ imageBase64, shot, script, metrics, language: language ?? script?.language }));
+    res.json(await checkFrame({ imageBase64, shot, script, metrics, aspect }));
   } catch (err) {
     next(err);
   }
@@ -395,6 +395,7 @@ app.post('/api/takes', requireUser, limits.takes, takeUpload, async (req, res, n
           analysis,
           frames: jpegFrames(req.body.frames),
           language,
+          ignored: ignoredTips(req.body.ignored),
         });
         director = { ...notes, source: 'claude' };
         if (notes.scene != null) analysis.features.breakdown.scene = notes.scene;
@@ -770,6 +771,16 @@ app.get('/api/reels/:id/file', requireUser, async (req, res, next) => {
     next(err);
   }
 });
+
+/** Live tips the creator heard twice and didn't act on: [{ id, text }], capped. */
+function ignoredTips(text) {
+  const list = safeJson(text);
+  if (!Array.isArray(list)) return [];
+  return list
+    .slice(0, 6)
+    .filter((t) => typeof t?.id === 'string' && typeof t?.text === 'string')
+    .map((t) => ({ id: t.id.slice(0, 8), text: t.text.slice(0, 120) }));
+}
 
 function safeJson(text) {
   try {

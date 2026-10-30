@@ -410,31 +410,6 @@ export async function writeScript({ creator, idea, format, language }) {
 
 // --- One-frame check ---------------------------------------------------------
 
-const verdict = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['ok', 'tip', 'tip_spoken'],
-  properties: {
-    ok: { type: 'boolean' },
-    tip: { type: 'string', description: 'If not ok: what to do, under 8 words, said like a friend ("Thoda window ki taraf ghumo"). Empty if ok.' },
-    tip_spoken: { type: 'string', description: 'tip as it should be spoken aloud (see language rules)' },
-  },
-};
-
-const frameSchema = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['light', 'framing', 'clutter', 'angle', 'top_tip', 'top_tip_spoken'],
-  properties: {
-    light: verdict,
-    framing: verdict,
-    clutter: verdict,
-    angle: verdict,
-    top_tip: { type: 'string', description: 'The single most useful fix, or "" if everything is fine' },
-    top_tip_spoken: { type: 'string', description: 'top_tip as it should be spoken aloud (see language rules)' },
-  },
-};
-
 const SPOKEN_RULES = {
   Hindi: 'Write tips in Hindi (Devanagari). The *_spoken fields: the same, in Devanagari.',
   Hinglish:
@@ -442,20 +417,79 @@ const SPOKEN_RULES = {
   English: 'Write tips in simple English. The *_spoken fields: the same sentence.',
 };
 
-export async function checkFrame({ imageBase64, shot, script, metrics, language }) {
+// The Shooting Standards' checks only a look at the picture can make; the phone
+// measures the rest (orientation, level, light on the face, distance, sound).
+const FRAME_CHECKS = {
+  L5: 'Mixed light colours: blue daylight together with a yellow lamp or a white tube light on the creator.',
+  F6: 'The thing the video is about (outfit, product, dish, move) is cut off or out of frame. fill: that thing.',
+  A1: 'Camera far below eye level: looking up the chin, ceiling or fan in view.',
+  A2: 'Camera far above eye level, looking down on the creator.',
+  A3: 'A full-length or outfit shot taken from face height, so the legs look short.',
+  A4: 'Body turned away from the camera without reason.',
+  B1: 'A stray object in frame behind the creator: towel, laundry, bags, bottles, wires. fill: that object.',
+  B2: "The setting doesn't suit the topic (a bedroom for a finance video, a bathroom for a cooking video). fill: the planned place, or a better spot you can see.",
+  B3: 'The creator stands flat against a wall, with no space behind them.',
+  D1: "The outfit doesn't suit the topic (a worn home t-shirt for a finance explainer).",
+  D2: 'The outfit or jewellery is the topic but is hidden (a chunni covering the work, hands hiding the product). fill: what is covering it.',
+};
+
+const fillWords = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['en', 'hinglish', 'hi'],
+  properties: {
+    en: { type: 'string', description: 'English word or short phrase, lower case ("towel", "bookshelf corner")' },
+    hinglish: { type: 'string', description: 'The same in Hinglish, Roman script ("towel", "bookshelf")' },
+    hi: { type: 'string', description: 'The same in Hindi, Devanagari ("तौलिया", "किताबों")' },
+  },
+};
+
+const frameSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['light_ok', 'issues', 'noise_source'],
+  properties: {
+    light_ok: {
+      type: 'boolean',
+      description: 'The face is clearly and evenly lit from the front: not backlit, not dark, no hard light from above, not one side much darker',
+    },
+    issues: {
+      type: 'array',
+      description: 'Only clear problems, most important first, at most 3. Empty if the shot is fine.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'fill'],
+        properties: {
+          id: { type: 'string', enum: Object.keys(FRAME_CHECKS) },
+          fill: { ...fillWords, description: 'The word for the [bracket] in the line (F6, B1, B2, D2). Empty strings for the others.' },
+        },
+      },
+    },
+    noise_source: { ...fillWords, description: 'A visible thing that makes steady noise (fan, AC, cooler, TV), or empty strings' },
+  },
+};
+
+export async function checkFrame({ imageBase64, shot, script, metrics, aspect }) {
   if (!client) throw new ClaudeError('Frame checks are not set up yet', 503);
-  const lang = SPOKEN_RULES[language] ? language : 'Hinglish';
+  const landscape = Number(aspect) > 1.01;
+  const format = landscape
+    ? 'a horizontal 16:9 video for YouTube (phone sideways, one to one and a half metres away, slightly off-centre is fine)'
+    : 'a vertical 9:16 video for Instagram Reels or YouTube Shorts';
   try {
     const message = await create({
       model: MODEL,
       max_tokens: 2000,
       output_config: { effort: 'low', format: { type: 'json_schema', schema: frameSchema } },
-      system: `You are a camera coach looking at one frame from a creator's phone just before they record a vertical Reel. Judge only what you can see.
-- light: is the face clearly and evenly lit? A bright wall behind someone is fine; only a window or lamp shining into the lens from behind them is backlight.
-- framing: does the framing match the planned shot (${shot?.framing ?? 'medium'})?
-- clutter: is the background tidy and right for this content? Clothes, an unmade bed or piles of stuff in view are not ok. If a place was suggested (say a kitchen counter) and this is clearly somewhere else that doesn't suit the content (say a bed), it's not ok: tell them to move there.
-- angle: is the phone at a flattering height (around eye level, not looking up the nose)?
-Say each tip the way a friend holding the phone would: short, plain, casual ("karo", not "kijiye"). ${SPOKEN_RULES[lang]}`,
+      system: `You are Darpan's camera coach, looking at one frame from a creator's phone just before they record ${format}. Judge only what you can see, and only flag clear problems.
+
+Checks (report the id):
+${Object.entries(FRAME_CHECKS)
+  .map(([id, look]) => `- ${id}: ${look}`)
+  .join('\n')}
+
+Be kind: talk about the shot, never the creator's body, looks or home. For D1 and D2 only say how the outfit fits the topic or shows on camera. A bright wall behind someone is fine light; only a window or lamp shining toward the lens from behind them is backlight.
+Fill words are what goes in the coach's line: "Move the [towel] out of frame", "Try the [bookshelf corner] for this topic", "Step back so your full [outfit] shows", "Move the [chunni] so the work shows". Give each in English, Hinglish (Roman) and Hindi (Devanagari).`,
       messages: [
         {
           role: 'user',
@@ -464,8 +498,9 @@ Say each tip the way a friend holding the phone would: short, plain, casual ("ka
             {
               type: 'text',
               text: [
+                script?.title ? `Topic: ${script.title}` : '',
                 shot ? `Planned shot: ${shot.title}. Framing: ${shot.framing}. Pose: ${shot.pose}. Direction: ${shot.direction}` : '',
-                script?.background?.suggestion ? `Suggested background: ${script.background.suggestion}` : '',
+                script?.background?.suggestion ? `Planned place: ${script.background.suggestion}` : '',
                 script?.lighting?.suggestion ? `Suggested lighting: ${script.lighting.suggestion}` : '',
                 metrics ? `On-device readings (0-1 brightness): ${JSON.stringify(metrics)}` : '',
               ]
@@ -476,7 +511,16 @@ Say each tip the way a friend holding the phone would: short, plain, casual ("ka
         },
       ],
     }, { fast: true });
-    return parseJsonResponse(message);
+    const result = parseJsonResponse(message);
+    const word = (f) => (f?.en ? f : null);
+    return {
+      light_ok: result.light_ok !== false,
+      issues: (result.issues ?? [])
+        .filter((i) => FRAME_CHECKS[i.id])
+        .slice(0, 3)
+        .map((i) => ({ id: i.id, fill: word(i.fill) })),
+      noise: word(result.noise_source),
+    };
   } catch (err) {
     throw wrapApiError(err);
   }
@@ -498,15 +542,18 @@ const noteSchema = {
         'flat_voice',
         'trailing_off',
         'looking_at_screen',
+        'too_fast',
+        'no_beat',
         'cut_off_ending',
         'fillers',
         'over_length',
         'wrong_place',
         'messy_background',
+        'ignored_tip',
         'other',
       ],
     },
-    note: { type: 'string', description: 'What to do on the next take, under 12 words, like a friend on set' },
+    note: { type: 'string', description: 'One sentence: what to do on the next take, under 14 words, like a friend on set' },
     note_spoken: { type: 'string', description: 'note as it should be spoken aloud (see language rules)' },
   },
 };
@@ -518,32 +565,36 @@ const takeSchema = {
   properties: {
     score: { type: 'integer', description: '0-100' },
     scene: { type: 'integer', description: 'The place and background, 0-10 (see the scene rules)' },
-    notes: { type: 'array', items: noteSchema, description: 'At most 2, most important first' },
+    notes: { type: 'array', items: noteSchema, description: 'At most 3, most important first' },
     praise: { type: 'string', description: 'One specific thing that worked, under 8 words, in the same language' },
   },
 };
 
-const TAKE_SYSTEM = `You are the art director on Darpan, coaching a first-time Indian creator between takes of a vertical Reel. Talk like a friend who knows filming, standing next to them: warm, direct, few words.
+const TAKE_SYSTEM = `You are the art director on Darpan, coaching a first-time Indian creator between takes of a Reel, Short or YouTube video. Talk like a friend who knows filming, standing next to them: warm, direct, few words.
 
-Give at most 2 notes, most important first, and only for problems the evidence supports. Prioritise the mistakes beginners miss:
-- slow_start: nothing said in the first 2 seconds, or opening with "hi guys" / greetings (greeting_opener)
-- flat_voice: little variation in loudness; trailing_off: the voice drops at the end of lines
-- looking_at_screen: eyes on the phone screen instead of the lens (the front camera sits above the screen, so eyes aimed slightly down in the frames means screen)
+Give at most 3 notes, most important first, and only for problems the evidence supports. Darpan's Shooting Standards set what to look for and how to say it; follow their wording (English / Hinglish / Hindi), filling the [brackets] from this take:
+- looking_at_screen (V1): eyes on the phone screen instead of the lens (the front camera sits above the screen, so eyes aimed slightly down in the frames means screen). Say: "Look at the lens, not at yourself." / "Screen nahi, lens mein dekho." / "स्क्रीन नहीं, लेंस में देखो।"
+- greeting_opener or slow_start (V2): opening with "hi guys", "so today…", or nothing said in the first 1–2 seconds. Say: "Skip the "hi guys". Open with the hook." / ""Hi guys" chhodo, seedha hook se shuru karo." / ""हाय गाइज़" छोड़ो, सीधे हुक से शुरू करो।"
+- too_fast (V3): speaking too fast. Say: "Slow down a little on [line]." / "[Line] pe thoda aaram se bolo." / "[लाइन] पर थोड़ा आराम से बोलो।"
+- fillers (V4): "matlab", "basically", "umm", "uh", "you know". Say: "One more take without the "[matlab]"." / "Ek aur take, bina "[matlab]" ke." / "एक और टेक, बिना "[मतलब]" के।"
+- flat_voice (V5): low energy for the script's tone. Say: "Give it a bit more energy." / "Thodi aur energy ke saath." / "थोड़ी और एनर्जी के साथ।"
+- no_beat (V6): no still beat of about a second at the start or the end of the take. Say: "Hold still for a beat at the end." / "End mein ek second ruko." / "आख़िर में एक सेकंड रुको।"
+- trailing_off: the voice drops at the end of lines
 - cut_off_ending: the last word clipped by stopping too soon
-- fillers: "umm", "uh", "matlab", "basically", "you know"
 - over_length: well over the planned length
 - wrong_place: the script planned a place (say a kitchen counter) and they're somewhere clearly different that doesn't suit the content (say on a bed)
 - messy_background: clothes, an unmade bed, piles of stuff or anything else distracting in view
+- ignored_tip: a live tip the creator heard twice before the take and didn't act on (listed below). Mention it once, in the tip's own words, if it still shows in the frames.
 Use "other" only for something clearly more important than all of these. A good take can have zero or one note.
 
 THE SCENE (look at the frames every time; the measurements can't see this):
 scene, out of 10: 9-10 the place matches the planned background and it's tidy; 6-8 a different place from the plan, but clean and it suits the content; 3-5 messy (clothes, an unmade bed, clutter) or clearly wrong for the content; 0-2 both the wrong place and messy. When scene is 5 or below, one of the notes must be about it: name the planned place or the thing to clear ("Kitchen counter pe shoot karo, script wahi ka hai", "Bed se kapde hata do").
 
-Each note is one short instruction for the next take, under 12 words. Say what to do, not a report of what went wrong ("Lens mein dekho, screen mein nahi", not "You were looking at the screen 40% of the time, which reduces eye contact"). No numbers unless they help, no jargon ("engagement", "retention", "delivery"), no filler praise like "Great job!". Use casual, gender-neutral Hindi forms: "karo", "dekho", "ruko" (never "kar rahe the" / "kar rahi thi").
-praise: one specific thing that worked, under 8 words ("Hook ekdum seedha tha"). Leave it empty rather than generic.
+Each note is one sentence that says what to do next time, under 14 words. Name the exact line or moment when you can ("Hold still for a beat after [last line]"). Say what to do, not a report of what went wrong ("Lens mein dekho, screen mein nahi", not "You were looking at the screen 40% of the time, which reduces eye contact"). No numbers unless they help, no jargon ("engagement", "retention", "delivery"), no filler praise like "Great job!". Use casual, gender-neutral Hindi forms: "karo", "dekho", "ruko" (never "kar rahe the" / "kar rahi thi").
+praise: one specific thing that worked, under 8 words; it is shown before the notes ("Strong start, and the smile at the end works", "Hook ekdum seedha tha"). Leave it empty rather than generic.
 The on-device measurements and the rule-based findings are evidence, not orders: the frames and transcript can overrule them. Start from the rule score and adjust by at most 15 points; a poor scene lowers it further on top of that (the app caps the score by the scene).`;
 
-export async function directorNotes({ shot, script, transcript, words, analysis, frames, language }) {
+export async function directorNotes({ shot, script, transcript, words, analysis, frames, language, ignored = [] }) {
   if (!client) throw new ClaudeError('Director notes are not set up', 503);
   const lang = SPOKEN_RULES[language] ? language : 'Hinglish';
   const timed = words.map((w) => `${w.start.toFixed(2)} ${w.text}`).join(' | ');
@@ -571,6 +622,7 @@ export async function directorNotes({ shot, script, transcript, words, analysis,
                 `Measurements: ${JSON.stringify(analysis.features)}`,
                 `Rule-based findings: ${JSON.stringify(analysis.issues)}`,
                 `Rule score: ${analysis.score}`,
+                ignored.length ? `Live tips heard twice and not acted on: ${ignored.map((t) => `${t.id} "${t.text}"`).join('; ')}` : '',
               ]
                 .filter(Boolean)
                 .join('\n'),
@@ -580,7 +632,7 @@ export async function directorNotes({ shot, script, transcript, words, analysis,
       ],
     }, { fast: true });
     const result = parseJsonResponse(message);
-    result.notes = (result.notes ?? []).slice(0, 2);
+    result.notes = (result.notes ?? []).slice(0, 3);
     result.scene = Number.isFinite(result.scene) ? Math.max(0, Math.min(10, Math.round(result.scene))) : null;
     // A great delivery on a messy bed isn't a 9: the scene caps the score (10 -> 100, 6 -> 80, 2 -> 60).
     const cap = result.scene == null ? 100 : 50 + result.scene * 5;

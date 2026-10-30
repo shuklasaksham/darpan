@@ -43,7 +43,7 @@ export const limits = {
   usernames: limit('usernames', 120, HOUR),
   trends: limit('trends', 30, HOUR),
   script: limit('script', 30, HOUR),
-  frameCheck: limit('frame', 120, HOUR),
+  frameCheck: limit('frame', 360, HOUR),
   transcribe: limit('transcribe', 60, HOUR),
   tts: limit('tts', 400, HOUR),
   takes: limit('takes', 80, HOUR),
