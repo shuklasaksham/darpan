@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import os from 'node:os';
 import { config } from './config.js';
 import { pool } from './db.js';
 import { findFillers } from './analyze.js';
@@ -301,6 +302,10 @@ ${hook ? `Dialogue: 2,${assTime(0)},${assTime(Math.min(HOOK_SECONDS, duration))}
 function ffmpeg(args, { duration, onProgress } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn('ffmpeg', ['-hide_banner', '-v', 'error', '-nostats', '-progress', 'pipe:1', ...args]);
+    // Below the web server, so requests (and Render's health check) stay quick.
+    try {
+      os.setPriority(child.pid, 10);
+    } catch {}
     let stderr = '';
     child.stdout.on('data', (buf) => {
       const m = /out_time_us=(\d+)/.exec(buf.toString());
