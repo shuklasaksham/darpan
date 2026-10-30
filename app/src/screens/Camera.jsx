@@ -29,8 +29,6 @@ const VIDEO_TYPES = ['video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;code
 const ASPECTS = { '9:16': 9 / 16, '4:5': 4 / 5, '1:1': 1, '16:9': 16 / 9 };
 // Light on the face, which Claude's look can overrule.
 const FACE_LIGHT = new Set(['L1', 'L2', 'L3', 'L4']);
-// Checks that come from Claude's look rather than the phone.
-const CLAUDE_IDS = new Set(['L5', 'F6', 'A1', 'A2', 'A3', 'A4', 'B1', 'B2', 'B3', 'D1', 'D2']);
 const TIMERS = [3, 10, 0]; // countdown seconds; 0 records straight away
 const TICK_MS = 200;
 // While recording, the checks run once a second: reading big camera frames any
@@ -336,6 +334,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
     let lastMatched = null;
     let lastSpeechEnd = 0;
     let voiceAt = 0; // last time the creator was heard during the take
+    let failingIds = new Set(); // last tick's failing checks, for hysteresis
     const exposure = new ExposureWatch();
     const behind = new BackgroundWatch();
     const detectCanvas = document.createElement('canvas');
@@ -517,7 +516,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
       // 4.1 Orientation and 4.2 steady (motion sensors; the screen's own
       // orientation when the phone has none).
       problems.push(
-        ...motionProblems(m, { aspect: s.aspect, facing: s.facing, framing: s.framing, recording: s.recording, takeGravity: takeGravityRef.current }),
+        ...motionProblems(m, { aspect: s.aspect, facing: s.facing, framing: s.framing, recording: s.recording, takeGravity: takeGravityRef.current, active: failingIds }),
       );
       if (!m) {
         if (s.aspect < 0.99 && s.landscape) problems.push({ id: 'O1' });
@@ -572,6 +571,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
         voiceAt = 0;
       }
 
+      failingIds = new Set(problems.map((p) => p.id));
       const coach = coachRef.current;
       const shown = coach ? coach.update(problems, { now, recording: s.recording, language: s.language, quiet: s.countdown > 0 }) : null;
       const tipKey = shown ? `${shown.id}|${shown.text}|${shown.praise ? 1 : 0}|${shown.quiet ? 1 : 0}` : null;
@@ -585,11 +585,12 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
         setMatched(isMatched);
       }
 
-      // Claude looks once the phone's own critical checks pass, then again when
-      // the scene changes, and soon after a tip of its own (to praise the fix).
+      // Claude looks once someone is in frame the right way up (it doesn't wait
+      // for the phone to be level or the light to be right: the coach still
+      // speaks its tips in the standards' order), then again when the scene
+      // changes, and soon after a tip of its own (to praise the fix).
       if (!s.recording && !s.countdown) {
-        const basicsPass =
-          (face || lastBody) && !problems.some((p) => ['orientation', 'steady', 'light', 'framing'].includes(CHECKS[p.id]?.area) && !CLAUDE_IDS.has(p.id));
+        const basicsPass = (face || lastBody) && !problems.some((p) => CHECKS[p.id]?.area === 'orientation');
         basicsSince = basicsPass ? basicsSince || now : 0;
         const key = `${s.shotIndex}|${s.aspectKey}|${s.facing}`;
         const since = now - c.lastAt;
