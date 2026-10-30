@@ -88,13 +88,14 @@ function send(method, url, body, onProgress) {
  * Sends a take for notes: its audio alone when there is one (small, so scoring
  * starts in seconds; the video follows with uploadTakeFile), else the video.
  */
-export function uploadTake(blob, { audio, aspect, planId, plan, shotIndex, durationSeconds, language, loudness, gaze, frames } = {}, onProgress) {
+export function uploadTake(blob, { audio, aspect, planId, plan, shotIndex, durationSeconds, language, loudness, gaze, frames, ignored } = {}, onProgress) {
   const body = new FormData();
   if (language) body.append('language', language);
   if (aspect) body.append('aspect', aspect);
   if (loudness?.length) body.append('loudness', JSON.stringify(loudness));
   if (gaze?.length) body.append('gaze', JSON.stringify(gaze));
   if (frames?.length) body.append('frames', JSON.stringify(frames));
+  if (ignored?.length) body.append('ignored', JSON.stringify(ignored));
   if (planId) body.append('planId', planId);
   else if (plan) body.append('plan', JSON.stringify(plan));
   if (shotIndex !== undefined) body.append('shotIndex', shotIndex);

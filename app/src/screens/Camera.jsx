@@ -6,16 +6,31 @@ import { pickMimeType, stopStream } from '../media.js';
 import { FrameGuide } from '../camera/silhouette.jsx';
 import { framingFor, headRegion, targetsFor } from '../camera/framing.js';
 import { detectFace, eyeLookDown, loadFaceDetector, loadFaceLandmarker, loadPoseLandmarker } from '../camera/vision.js';
-import { bodyGeometry, faceGeometry, framingProblems, lightProblems, lightReadings, soundProblems } from '../camera/checks.js';
-import { ProblemTracker, SoundMeter, Speaker, tipText } from '../camera/coach.js';
+import {
+  BACKGROUND_MOVING,
+  BackgroundWatch,
+  ExposureWatch,
+  STEADY,
+  bodyGeometry,
+  faceGeometry,
+  framingProblems,
+  lightProblems,
+  lightReadings,
+  motionProblems,
+  soundProblems,
+} from '../camera/checks.js';
+import { Coach, SoundMeter, Speaker } from '../camera/coach.js';
+import { Motion } from '../camera/motion.js';
+import { CHECKS, lineFor } from '../camera/standards.js';
 import Glyph from '../ui/Glyph.jsx';
 import { formatTime, readPref, writePref } from '../ui/parts.jsx';
 
 const VIDEO_TYPES = ['video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
 const ASPECTS = { '9:16': 9 / 16, '4:5': 4 / 5, '1:1': 1, '16:9': 16 / 9 };
-const FRAMING_IDS = new Set(['no_face', 'no_body', 'raise_phone', 'lower_phone', 'show_feet', 'come_closer', 'move_back', 'step_left', 'step_right']);
-const LIGHT_IDS = new Set(['backlight', 'face_dark', 'face_bright', 'room_dark']);
-const TIP_GLYPHS = { backlight: 'light', face_dark: 'light', face_bright: 'light', room_dark: 'light', claude_light: 'light' };
+// Light on the face, which Claude's look can overrule.
+const FACE_LIGHT = new Set(['L1', 'L2', 'L3', 'L4']);
+// Checks that come from Claude's look rather than the phone.
+const CLAUDE_IDS = new Set(['L5', 'F6', 'A1', 'A2', 'A3', 'A4', 'B1', 'B2', 'B3', 'D1', 'D2']);
 const TIMERS = [3, 10, 0]; // countdown seconds; 0 records straight away
 const TICK_MS = 200;
 // While recording, the checks run once a second: reading big camera frames any
@@ -37,6 +52,14 @@ function cropRect(vw, vh, aspect) {
   }
   const h = vw / aspect;
   return { x: 0, y: (vh - h) / 2, w: vw, h };
+}
+
+/** The scene changed enough since Claude's last look to look again. */
+function sceneChanged(before, now) {
+  if (!before || !now || before.length !== now.length) return Boolean(now);
+  let diff = 0;
+  for (let i = 0; i < now.length; i += 4) diff += Math.abs(now[i] - before[i]);
+  return diff / (now.length / 4) > 0.06;
 }
 
 function sizeFor(aspect, edge) {
@@ -61,6 +84,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   const startedAtRef = useRef(0);
   const closedRef = useRef(false);
   const statsRef = useRef(null); // loudness, gaze and frames gathered during a take
+  const takeGravityRef = useRef(null); // where gravity pointed when the take started (S3)
   const meterRef = useRef(null);
   const levelRef = useRef(null); // latest loudness reading, for the teleprompter
   const loudTimerRef = useRef(0);
@@ -128,7 +152,8 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
 
   // Values the analysis loop reads without being restarted.
   const live = useRef({});
-  live.current = { aspect, framing, recording, countdown, language, planned, shotIndex, muted, aspectKey, facing };
+  const planSeconds = Number(shot?.duration_seconds) || 0;
+  live.current = { aspect, framing, recording, countdown, language, planned, shotIndex, muted, aspectKey, facing, landscape, planSeconds };
 
   // Keep the screen awake while the camera is open (Android Chrome, iOS 16.4+).
   useEffect(() => {
@@ -200,9 +225,25 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
         const got = track?.getSettings?.() ?? {};
         const maxW = Math.min(caps.width?.max ?? 0, MAX_CAMERA_EDGE);
         const maxH = Math.min(caps.height?.max ?? 0, MAX_CAMERA_EDGE);
-        if (maxW && maxH && maxW * maxH > (got.width ?? 0) * (got.height ?? 0)) {
-          track.applyConstraints({ width: { ideal: maxW }, height: { ideal: maxH }, frameRate: { ideal: 30 } }).catch(() => {});
-        }
+        const raised =
+          maxW && maxH && maxW * maxH > (got.width ?? 0) * (got.height ?? 0)
+            ? track.applyConstraints({ width: { ideal: maxW }, height: { ideal: maxH }, frameRate: { ideal: 30 } }).catch(() => {})
+            : Promise.resolve();
+        const supported = navigator.mediaDevices.getSupportedConstraints?.() ?? {};
+        camRef.current = {
+          focusable: Boolean(supported.pointsOfInterest && caps.focusMode?.some((m) => m === 'single-shot' || m === 'continuous')),
+          lockable: Boolean(supported.pointsOfInterest && caps.exposureMode?.includes('single-shot')),
+          locked: false,
+          lowSettings: false,
+        };
+        // C3: still under 1080p once the app asked for the camera's best, on a
+        // camera that can do 1080p.
+        raised.then(() => {
+          const now = track.getSettings?.() ?? {};
+          const short = Math.min(now.width ?? 0, now.height ?? 0);
+          const canShort = Math.min(caps.width?.max ?? 0, caps.height?.max ?? 0);
+          camRef.current.lowSettings = short > 0 && short < 1080 && canShort >= 1080;
+        });
       })
       .catch((err) => {
         if (cancelled) return;
@@ -239,15 +280,46 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
     if (muted) speakerRef.current?.stop();
   }, [muted]);
 
-  // Claude's verdicts. `lightVerdict` remembers the light it judged so it stops
-  // applying once the light changes.
-  const claudeRef = useRef({ busy: false, lastAt: 0, checkedKey: null, lightVerdict: null, tip: null });
+  // One coach for the session: it decides which tip to show and say, and when.
+  const coachRef = useRef(null);
+  useEffect(() => {
+    coachRef.current = new Coach(speakerRef.current);
+  }, [health?.tts]);
+
+  // The phone's motion sensors: orientation, level, stillness, camera height.
+  const motionRef = useRef(null);
+  useEffect(() => {
+    const motion = new Motion();
+    motion.start();
+    motionRef.current = motion;
+    return () => motion.stop();
+  }, []);
+
+  // Browsers only play sound (and iOS only shares motion) after a tap: unlock
+  // both on the first touch anywhere, so tips are heard before the first take.
+  const unlockedRef = useRef(false);
+  const unlockVoice = () => {
+    speakerRef.current?.unlock();
+    if (unlockedRef.current) return;
+    unlockedRef.current = true;
+    Motion.permit();
+  };
+
+  // What this camera lets the creator do (tap to focus, hold to lock), and
+  // whether it records below 1080p or 24 fps (C3).
+  const camRef = useRef({ focusable: false, lockable: false, locked: false, lowSettings: false });
+
+  // Claude's look at the frame: the checks only a picture can show (mixed light,
+  // background, outfit, the topic in frame). `light` remembers the light it
+  // judged, so its verdict stops applying once the light changes.
+  const claudeRef = useRef({ busy: false, lastAt: 0, key: null, luma: null, light: null, issues: [], noise: null });
 
   useEffect(() => {
-    // New shot, ratio or camera: Claude's earlier look no longer applies.
-    claudeRef.current.checkedKey = null;
-    claudeRef.current.tip = null;
+    // New shot, ratio or camera: Claude's earlier look no longer applies, and
+    // the coach starts the shot fresh.
+    Object.assign(claudeRef.current, { key: null, luma: null, light: null, issues: [], noise: null });
     setClaude(null);
+    coachRef.current?.reset();
   }, [shotIndex, aspectKey, facing]);
 
   useEffect(() => {
@@ -260,15 +332,18 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
     let lastBody = null;
     let tick = 0;
     let basicsSince = 0;
-    let lastTipId = null;
+    let lastTipKey = null;
     let lastMatched = null;
     let lastSpeechEnd = 0;
-    const tracker = new ProblemTracker();
+    let voiceAt = 0; // last time the creator was heard during the take
+    const exposure = new ExposureWatch();
+    const behind = new BackgroundWatch();
     const detectCanvas = document.createElement('canvas');
     const lightCanvas = document.createElement('canvas');
     const scratch = document.createElement('canvas');
     const detectCtx = detectCanvas.getContext('2d', { willReadFrequently: true });
     const lightCtx = lightCanvas.getContext('2d', { willReadFrequently: true });
+    coachRef.current?.reset();
 
     let landmarker = null;
     loadFaceDetector()
@@ -289,26 +364,46 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
     } catch {}
     meterRef.current = meter;
 
+    // Frames actually delivered per second (dim light makes phones slow down).
+    let frames = 0;
+    let fpsSince = performance.now();
+    let fps = null;
+    let slowWindows = 0; // 3-second windows in a row under 24 fps
+    const video = videoRef.current;
+    const countFrame = () => {
+      if (stopped) return;
+      frames++;
+      const t = performance.now();
+      if (t - fpsSince >= 3000) {
+        fps = (frames * 1000) / (t - fpsSince);
+        slowWindows = fps < 24 && document.visibilityState === 'visible' ? slowWindows + 1 : 0;
+        frames = 0;
+        fpsSince = t;
+      }
+      video.requestVideoFrameCallback(countFrame);
+    };
+    if (video?.requestVideoFrameCallback) video.requestVideoFrameCallback(countFrame);
+
     const sendFrameCheck = async (reason, readings) => {
       const c = claudeRef.current;
-      const { planned: p, shotIndex: idx, language: lang } = live.current;
+      const { planned: p, shotIndex: idx, aspect: forAspect } = live.current;
       if (c.busy || !health?.scripts) return;
       c.busy = true;
       c.lastAt = Date.now();
       try {
-        const [w, h] = sizeFor(live.current.aspect, 512);
+        const [w, h] = sizeFor(forAspect, 512);
         const snap = document.createElement('canvas');
         snap.width = w;
         snap.height = h;
         const v = videoRef.current;
-        const crop = cropRect(v.videoWidth, v.videoHeight, live.current.aspect);
+        const crop = cropRect(v.videoWidth, v.videoHeight, forAspect);
         snap.getContext('2d').drawImage(v, crop.x, crop.y, crop.w, crop.h, 0, 0, w, h);
         const started = performance.now();
         const result = await checkFrame({
           image: snap.toDataURL('image/jpeg', 0.75),
           planId: p?.planId,
           shotIndex: idx,
-          language: lang,
+          aspect: forAspect,
           metrics: readings && {
             face: readings.face?.toFixed(2),
             background: readings.background?.toFixed(2),
@@ -316,18 +411,13 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
             contrast: readings.contrast.toFixed(2),
           },
         });
-        if (stopped) return;
+        if (stopped || live.current.aspect !== forAspect) return;
         result.reason = reason;
         result.ms = Math.round(performance.now() - started);
-        c.lightVerdict = {
-          ok: result.light.ok,
-          tip: result.light.tip,
-          spoken: result.light.tip_spoken,
-          face: readings?.face ?? null,
-          background: readings?.background ?? null,
-        };
-        const others = ['framing', 'clutter', 'angle'].filter((k) => !result[k].ok);
-        c.tip = others.length && result.top_tip ? { text: result.top_tip, spoken: result.top_tip_spoken, at: Date.now() } : null;
+        c.light = { ok: result.light_ok, face: readings?.face ?? null, background: readings?.background ?? null };
+        c.issues = result.issues;
+        c.noise = result.noise;
+        c.luma = readings?.luma ?? null;
         setClaude(result);
       } catch (err) {
         if (!stopped) setClaude({ error: err.message });
@@ -367,7 +457,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
       }
       const face = faceResult.eyes ? { ...faceResult, ...faceGeometry(faceResult) } : null;
 
-      // Body pose only when the framing needs it, and every other tick.
+      // Body pose only when the framing needs it, and every third tick.
       const needsBody = s.framing === 'full_body' || s.framing === 'waist_up';
       if (needsBody && !poseLandmarker && faceDetector) {
         poseLandmarker = 'loading';
@@ -385,7 +475,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
         }
       }
 
-      // Light: the middle of the face and the whole frame.
+      // Light: the face (middle, forehead, both sides), the background, sharpness.
       const [lw, lh] = sizeFor(s.aspect, LIGHT_EDGE);
       if (lightCanvas.width !== lw || lightCanvas.height !== lh) {
         lightCanvas.width = lw;
@@ -418,62 +508,105 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
       if (meter && now - lastSpeechEnd > 700) sound = meter.read(now);
       else meter?.reset();
 
-      const problems = [];
-      if (faceDetector) {
-        problems.push(...framingProblems({ framing: s.framing, face, body: lastBody, hasFace: Boolean(face) }));
-      }
-      let light = lightProblems(readings);
+      // --- The Shooting Standards' checks, in their fix-first order ---------
       const c = claudeRef.current;
-      const verdict = c.lightVerdict;
+      const cam = camRef.current;
+      const m = motionRef.current?.read() ?? null;
+      const problems = [];
+
+      // 4.1 Orientation and 4.2 steady (motion sensors; the screen's own
+      // orientation when the phone has none).
+      problems.push(
+        ...motionProblems(m, { aspect: s.aspect, facing: s.facing, framing: s.framing, recording: s.recording, takeGravity: takeGravityRef.current }),
+      );
+      if (!m) {
+        if (s.aspect < 0.99 && s.landscape) problems.push({ id: 'O1' });
+        if (s.aspect > 1.01 && !s.landscape) problems.push({ id: 'O2' });
+      }
+      const still = !m || m.shake <= STEADY.shake;
+
+      // 4.3 Light and 4.8 lens. Claude's look at this same light wins over the
+      // phone's reading of L1–L4.
+      let light = lightProblems(readings, { focusable: cam.focusable });
+      const verdict = c.light;
       const sameLight =
         verdict &&
         readings.face != null &&
         verdict.face != null &&
         Math.abs(readings.face - verdict.face) < 0.12 &&
         Math.abs((readings.background ?? 0) - (verdict.background ?? 0)) < 0.15;
-      if (sameLight && light.some((p) => LIGHT_IDS.has(p.id))) {
-        // Claude looked at this same light: its verdict wins over the local reading.
-        light = light.filter((p) => !LIGHT_IDS.has(p.id));
-        if (!verdict.ok && verdict.tip) {
-          light.push({ id: 'claude_light', priority: 5, text: verdict.tip, spoken: verdict.spoken || verdict.tip });
-        }
+      if (sameLight && verdict.ok) light = light.filter((p) => !FACE_LIGHT.has(p.id));
+      problems.push(...light);
+      if (cam.lockable && !cam.locked && face && still) {
+        exposure.push(now, readings.frame);
+        if (exposure.hunting()) problems.push({ id: 'L6' });
+      } else {
+        exposure.clear();
       }
-      problems.push(...light, ...soundProblems(sound, { recording: s.recording }));
-      if (c.tip && now - c.tip.at < 15000) {
-        problems.push({ id: 'claude', priority: 9, text: c.tip.text, spoken: c.tip.spoken || c.tip.text });
+      if (cam.lowSettings || slowWindows >= 2) problems.push({ id: 'C3' });
+
+      // 4.4 Distance and framing.
+      if (faceDetector) {
+        const topic = c.issues.find((i) => i.id === 'F6')?.fill ?? null;
+        problems.push(...framingProblems({ framing: s.framing, face, body: lastBody, hasFace: Boolean(face), aspect: s.aspect, topic }));
       }
 
-      const { active, ages } = tracker.update(problems, now);
-      const top = active[0];
-      const lang = s.language;
-      const words = top
-        ? top.text
-          ? { text: top.text, spoken: top.spoken, languageCode: lang === 'English' ? 'en-IN' : 'hi-IN' }
-          : tipText(top, lang)
-        : null;
-      if ((top?.id ?? null) !== lastTipId) {
-        lastTipId = top?.id ?? null;
-        setTip(top ? { id: top.id, text: words.text } : null);
+      // 4.6 Background: someone moving behind, with the phone still.
+      const moving = still ? behind.moving(readings, face) : 0;
+      if (!still) behind.clear();
+      if (moving > BACKGROUND_MOVING) problems.push({ id: 'B4' });
+
+      // 4.7 Sound.
+      problems.push(...soundProblems(sound, { recording: s.recording, noise: c.noise }));
+
+      // What Claude saw: mixed light, topic, angle, background, outfit.
+      problems.push(...c.issues);
+
+      // V7: the creator stopped mid-line, well before the planned length.
+      if (s.recording && stats) {
+        if (sound && sound.rmsDb > Math.max(sound.floorDb + 10, -50)) voiceAt = now;
+        const elapsed = (now - stats.startedAt) / 1000;
+        const early = !s.planSeconds || elapsed < s.planSeconds * 0.85;
+        if (voiceAt > stats.startedAt && early && elapsed > 3 && now - voiceAt > 4000) problems.push({ id: 'V7' });
+      } else {
+        voiceAt = 0;
       }
-      const isMatched = Boolean(faceDetector) && !problems.some((p) => FRAMING_IDS.has(p.id));
+
+      const coach = coachRef.current;
+      const shown = coach ? coach.update(problems, { now, recording: s.recording, language: s.language, quiet: s.countdown > 0 }) : null;
+      const tipKey = shown ? `${shown.id}|${shown.text}|${shown.praise ? 1 : 0}|${shown.quiet ? 1 : 0}` : null;
+      if (tipKey !== lastTipKey) {
+        lastTipKey = tipKey;
+        setTip(shown);
+      }
+      const isMatched = Boolean(faceDetector) && !problems.some((p) => CHECKS[p.id]?.area === 'framing');
       if (isMatched !== lastMatched) {
         lastMatched = isMatched;
         setMatched(isMatched);
       }
-      // Spoken tips only between takes, so Darpan's voice never ends up in a recording.
-      if (top && !s.recording && !s.countdown && speaker) speaker.maybeSay(top.id, words, now);
 
-      // Claude: one look once the basics pass, and again if a light warning won't go away.
-      const basicsPass = face || lastBody ? problems.length === 0 : false;
-      basicsSince = basicsPass ? basicsSince || now : 0;
-      const key = `${s.shotIndex}|${s.aspectKey}|${s.facing}`;
-      if (!s.recording && !s.countdown && basicsSince && now - basicsSince > 1500 && c.checkedKey !== key && now - c.lastAt > 5000) {
-        c.checkedKey = key;
-        sendFrameCheck('basics passed', readings);
-      }
-      const lightAge = Math.max(0, ...['backlight', 'face_dark', 'face_bright'].map((id) => tracker.age(id, now)));
-      if (!s.recording && !s.countdown && lightAge > 3000 && !sameLight && now - c.lastAt > 6000) {
-        sendFrameCheck('light warning persisted', readings);
+      // Claude looks once the phone's own critical checks pass, then again when
+      // the scene changes, and soon after a tip of its own (to praise the fix).
+      if (!s.recording && !s.countdown) {
+        const basicsPass =
+          (face || lastBody) && !problems.some((p) => ['orientation', 'steady', 'light', 'framing'].includes(CHECKS[p.id]?.area) && !CLAUDE_IDS.has(p.id));
+        basicsSince = basicsPass ? basicsSince || now : 0;
+        const key = `${s.shotIndex}|${s.aspectKey}|${s.facing}`;
+        const since = now - c.lastAt;
+        if (basicsSince && now - basicsSince > 1500 && since > 5000) {
+          if (c.key !== key) {
+            c.key = key;
+            sendFrameCheck('basics passed', readings);
+          } else if (since > 7000 && c.issues.some((i) => !coach?.ignored.has(i.id))) {
+            sendFrameCheck('checking the fix', readings);
+          } else if (since > 12000 && sceneChanged(c.luma, readings.luma)) {
+            sendFrameCheck('scene changed', readings);
+          }
+        }
+        const lightFailing = light.some((p) => FACE_LIGHT.has(p.id));
+        if (lightFailing && !sameLight && since > 6000 && coach?.since.has(light[0].id) && now - coach.since.get(light[0].id) > 3000) {
+          sendFrameCheck('light warning persisted', readings);
+        }
       }
 
       if (debug && tick % 2 === 0) {
@@ -485,11 +618,15 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
           body: lastBody,
           readings,
           sound,
-          ages,
-          targets: targetsFor(s.framing),
-          region: headRegion(s.framing, s.aspect),
-          lightOverride: sameLight ? (verdict.ok ? 'Claude: light OK' : `Claude: ${verdict.tip}`) : null,
+          motion: m,
+          fps,
+          moving,
+          problems: problems.map((p) => p.id),
+          ignored: coach?.ignoredTips().map((t) => t.id) ?? [],
+          lightOverride: sameLight ? (verdict.ok ? 'Claude: light OK' : 'Claude: light not ok') : null,
           speaking: Boolean(speaker?.speaking),
+          region: headRegion(s.framing, s.aspect),
+          targets: targetsFor(s.framing),
         });
       }
     };
@@ -577,6 +714,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
     audioRecorderRef.current = audioRecorder;
     startedAtRef.current = Date.now();
     statsRef.current = { startedAt: startedAtRef.current, loudness: [], gaze: [], frames: [], lastFrameAt: 0 };
+    takeGravityRef.current = motionRef.current?.read()?.gravity ?? null;
     // Loudness 10 times a second, to see how much the voice rises and falls
     // (and to move the teleprompter along while the creator speaks).
     loudTimerRef.current = setInterval(() => {
@@ -632,6 +770,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
           loudness: stats?.loudness,
           gaze: stats?.gaze,
           frames: pickFrames(stats?.frames ?? []),
+          ignored: coachRef.current?.ignoredTips(),
         },
         (progress) => setTake((t) => (t?.url === url ? { ...t, progress } : t)),
       );
@@ -697,7 +836,6 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   }, [permission, reelOpen]);
 
   const script = planned?.script;
-  const planSeconds = Number(shot?.duration_seconds) || 0;
   const busy = recording || countdown > 0;
 
   useEffect(() => {
@@ -708,19 +846,77 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
     return () => mq.removeEventListener('change', onChange);
   }, []);
 
-  // Turning the phone switches between 9:16 and 16:9 (a square stays square).
-  // Mid-take the frame stays as it started.
+  // Turning the phone switches between 9:16 and 16:9 (a square stays square),
+  // until a take is kept: a reel keeps one shape, so after that the coach asks
+  // the creator to turn back (O1/O2). Mid-take the frame stays as it started.
+  const formatFixed = Object.keys(kept).length > 0;
   useEffect(() => {
-    if (busy) return;
+    if (busy || formatFixed) return;
     setAspectKey((k) => (landscape ? (ASPECTS[k] < 1 ? '16:9' : k) : ASPECTS[k] > 1 ? '9:16' : k));
   }, [landscape]);
+
+  // Tap the preview to focus there; hold to lock focus and exposure (C2, L6).
+  const pressRef = useRef(null);
+  const [focusMark, setFocusMark] = useState(null);
+  useEffect(() => {
+    if (!focusMark) return;
+    const id = setTimeout(() => setFocusMark(null), 1500);
+    return () => clearTimeout(id);
+  }, [focusMark]);
+  function pointIn(e) {
+    const v = videoRef.current;
+    if (!v?.videoWidth) return null;
+    const r = v.getBoundingClientRect();
+    const scale = Math.max(r.width / v.videoWidth, r.height / v.videoHeight);
+    const dw = v.videoWidth * scale;
+    const dh = v.videoHeight * scale;
+    let x = (e.clientX - r.left - (r.width - dw) / 2) / dw;
+    const y = (e.clientY - r.top - (r.height - dh) / 2) / dh;
+    if (mirrored) x = 1 - x;
+    const stage = stageRef.current.getBoundingClientRect();
+    return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)), left: e.clientX - stage.left, top: e.clientY - stage.top };
+  }
+  function aim(point, lock) {
+    const track = streamRef.current?.getVideoTracks()[0];
+    const cam = camRef.current;
+    if (!track || !point || (lock ? !cam.lockable : !cam.focusable)) return;
+    const caps = track.getCapabilities?.() ?? {};
+    const focusMode = caps.focusMode?.includes('single-shot') ? 'single-shot' : 'continuous';
+    const settings = lock ? { exposureMode: 'single-shot', focusMode } : { focusMode, ...(caps.exposureMode?.includes('continuous') ? { exposureMode: 'continuous' } : {}) };
+    track
+      .applyConstraints({ advanced: [{ pointsOfInterest: [{ x: point.x, y: point.y }], ...settings }] })
+      .then(() => {
+        cam.locked = lock;
+        setFocusMark({ left: point.left, top: point.top, locked: lock });
+      })
+      .catch(() => {});
+  }
+  function pressStart(e) {
+    if (busy) return;
+    const point = pointIn(e);
+    clearTimeout(pressRef.current?.timer);
+    pressRef.current = { point, timer: setTimeout(() => (pressRef.current = null, aim(point, true)), 600) };
+  }
+  function pressEnd() {
+    if (!pressRef.current) return;
+    clearTimeout(pressRef.current.timer);
+    aim(pressRef.current.point, false);
+    pressRef.current = null;
+  }
+  function pressCancel() {
+    clearTimeout(pressRef.current?.timer);
+    pressRef.current = null;
+  }
 
   if ((permission === 'ask' || permission === 'blocked') && !take && !reelOpen) {
     return (
       <CameraPermission
         blocked={permission === 'blocked'}
         shotLabel={shots.length ? `Shot ${shotIndex + 1} of ${shots.length}` : ''}
-        onAllow={() => setPermission('go')}
+        onAllow={() => {
+          unlockVoice();
+          setPermission('go');
+        }}
         onClose={onClose}
         onPickFile={onPickFile}
       />
@@ -728,12 +924,17 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   }
 
   return (
-    <div className={`camera studio ${landscape ? 'landscape' : ''}`}>
+    <div className={`camera studio ${landscape ? 'landscape' : ''}`} onPointerDown={unlockVoice}>
       <div className="stage">
-        <div className="stage-frame" ref={stageRef} style={{ '--aspect': aspect }}>
+        <div className="stage-frame" ref={stageRef} style={{ '--aspect': aspect }} onPointerDown={pressStart} onPointerUp={pressEnd} onPointerCancel={pressCancel}>
           <video ref={videoRef} className={mirrored ? 'mirrored' : ''} autoPlay playsInline muted onLoadedMetadata={() => setVideoReady(true)} />
           {shot && !recording && <FrameGuide framing={framing} aspect={aspect} matched={matched} />}
           {debug && debugInfo && <DebugOverlay info={debugInfo} aspect={aspect} mirrored={mirrored} />}
+          {focusMark && (
+            <span className={`focus-mark ${focusMark.locked ? 'locked' : ''}`} style={{ left: focusMark.left, top: focusMark.top }} aria-hidden="true">
+              {focusMark.locked && <span>Locked</span>}
+            </span>
+          )}
         </div>
       </div>
       <div className="cam-scrim-top" aria-hidden="true" />
@@ -812,23 +1013,13 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
           )}
         </div>
         <div className="cam-foot">
-          {!recording && !countdown && claude && !claude.error && (
-            <div className="coach-stack">
-              <LookCard result={claude} onClose={() => setClaude(null)} />
-            </div>
-          )}
           {shot && !busy && (
             <button className="line-peek" onClick={() => setShowScript(true)} aria-label={`Open the whole script. Your line: ${shot.line}`}>
               <span className="eyebrow">Your line</span>
               <span className="say">{shot.line}</span>
             </button>
           )}
-          {aspect > 1 && !landscape && !busy && (
-            <p className="coach-pill">
-              <Glyph name="rotate" size={18} /> Turn your phone sideways for landscape
-            </p>
-          )}
-          {!countdown && <CoachPill tip={tip} recording={recording} visionState={visionState} hasShot={Boolean(shot)} lostNotice={lostNotice} onDismissLost={() => setLostNotice(0)} />}
+          {!countdown && <CoachPill tip={tip} language={language} recording={recording} visionState={visionState} hasShot={Boolean(shot)} lostNotice={lostNotice} onDismissLost={() => setLostNotice(0)} />}
           {!recording && (
             <div className="cam-tools">
               <button className={`cam-btn ${showAspects ? 'on' : ''}`} onClick={() => setShowAspects((v) => !v)} disabled={busy} aria-label={`Aspect ratio ${aspectKey}`}>
@@ -995,7 +1186,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   );
 }
 
-function CoachPill({ tip, recording, visionState, hasShot, lostNotice, onDismissLost }) {
+function CoachPill({ tip, language, recording, visionState, hasShot, lostNotice, onDismissLost }) {
   if (lostNotice > 0 && !recording) {
     return (
       <button className="coach-pill" onClick={onDismissLost} style={{ border: 0, minHeight: 0 }}>
@@ -1007,10 +1198,18 @@ function CoachPill({ tip, recording, visionState, hasShot, lostNotice, onDismiss
   if (visionState === 'off' && !recording) {
     return <p className="coach-pill quiet">Live checks aren’t available on this phone. You can still record.</p>;
   }
+  if (tip?.praise) {
+    return (
+      <p className="coach-pill good" aria-live="polite">
+        <Glyph name="check" size={18} />
+        {tip.text}
+      </p>
+    );
+  }
   if (tip) {
     return (
-      <p className={`coach-pill ${recording ? 'quiet' : ''}`} aria-live="polite">
-        <Glyph name={TIP_GLYPHS[tip.id] ?? 'frame'} size={18} />
+      <p className={`coach-pill ${tip.quiet ? 'quiet' : ''}`} aria-live="polite">
+        <Glyph name={CHECKS[tip.id]?.glyph ?? 'frame'} size={18} />
         {tip.text}
       </p>
     );
@@ -1018,7 +1217,7 @@ function CoachPill({ tip, recording, visionState, hasShot, lostNotice, onDismiss
   if (!recording && visionState === 'ready' && hasShot) {
     return (
       <p className="coach-pill good" aria-live="polite">
-        <Glyph name="check" size={18} /> Perfect. Hold it there
+        <Glyph name="check" size={18} /> {lineFor('ALL', language, null, 'praise').text}
       </p>
     );
   }
@@ -1183,36 +1382,6 @@ function CameraPermission({ blocked, shotLabel, onAllow, onClose, onPickFile }) 
   );
 }
 
-function LookCard({ result, onClose }) {
-  const rows = [
-    ['Light', result.light],
-    ['Framing', result.framing],
-    ['Background', result.clutter],
-    ['Angle', result.angle],
-  ];
-  return (
-    <div className="look-card">
-      <div className="row between">
-        <strong>Darpan took a look</strong>
-        <button className="icon-btn bare" style={{ width: 32, height: 32, minHeight: 32 }} onClick={onClose} aria-label="Dismiss">
-          <Glyph name="x" size={18} />
-        </button>
-      </div>
-      <ul>
-        {rows.map(([label, v]) => (
-          <li key={label} className={v.ok ? 'ok' : 'fix'}>
-            <Glyph name={v.ok ? 'check' : 'alert'} size={16} />
-            <span>
-              {label}
-              {!v.ok && v.tip ? `: ${v.tip}` : ''}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
 /** First, middle and last frames of the take, as JPEG data URLs. */
 function pickFrames(frames) {
   if (frames.length <= 3) return frames.map(([, data]) => data);
@@ -1278,14 +1447,16 @@ function DebugPanel({ info, claude, visionState }) {
           : 'no face',
         body ? `body headTop ${f(body.headTop)}  feet ${body.feetVisible ? 'in' : 'out'} ${f(body.feetY)}  height ${f(body.height)}  hips ${body.hipsVisible ? 'in' : 'out'}` : '',
         `light face ${f(r.face)}  bg ${f(r.background)}  frame ${f(r.frame)}  contrast ${f(r.contrast)}`,
-        `clip hi ${f(r.clippedHigh * 100, 1)}%  lo ${f(r.clippedLow * 100, 1)}%  sharp ${f(r.sharpness, 4)}`,
+        `forehead ${f(r.forehead)}  under eyes ${f(r.underEyes)}  sides ${f(r.sideA)}/${f(r.sideB)}  sharp ${f(r.sharpness, 4)} face ${f(r.faceSharpness, 4)} bg ${f(r.backgroundSharpness, 4)}`,
+        info.motion ? `motion ${info.motion.sideways ? 'sideways' : 'upright'}  tilt ${f(info.motion.tilt, 1)}°  pitch ${f(info.motion.pitch, 1)}°  shake ${f(info.motion.shake, 1)}°/s  jolt ${f(info.motion.jolt, 0)}` : 'motion —',
+        `fps ${f(info.fps, 1)}  background moving ${f(info.moving * 100, 1)}%`,
         s ? `sound rms ${f(s.rmsDb, 0)}dB  peak ${f(s.peakDb, 0)}dB  floor ${f(s.floorDb, 0)}dB` : `sound — ${info.speaking ? '(Darpan speaking)' : ''}`,
-        `problems ${Object.entries(info.ages).map(([id, ms]) => `${id} ${(ms / 1000).toFixed(1)}s`).join(', ') || 'none'}`,
+        `failing ${info.problems.join(', ') || 'none'}${info.ignored.length ? `  ignored ${info.ignored.join(', ')}` : ''}`,
         info.lightOverride ? `light override ${info.lightOverride}` : '',
         claude
           ? claude.error
             ? `claude error: ${claude.error}`
-            : `claude (${claude.reason}, ${claude.ms}ms) light ${claude.light.ok ? 'ok' : 'x'} framing ${claude.framing.ok ? 'ok' : 'x'} clutter ${claude.clutter.ok ? 'ok' : 'x'} angle ${claude.angle.ok ? 'ok' : 'x'}`
+            : `claude (${claude.reason}, ${claude.ms}ms) light ${claude.light_ok ? 'ok' : 'x'}  ${claude.issues.map((i) => `${i.id}${i.fill ? ` [${i.fill.en}]` : ''}`).join(', ') || 'no issues'}${claude.noise ? `  noise ${claude.noise.en}` : ''}`
           : 'claude —',
       ]
         .filter(Boolean)

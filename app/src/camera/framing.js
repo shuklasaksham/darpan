@@ -11,7 +11,7 @@ export const CHIN = 0.13;
 
 export const FRAMINGS = {
   closeup: { headTop: 0.1, scale: 3.3, tolerance: 0.07, label: 'Close-up' },
-  medium: { headTop: 0.12, scale: 1.95, tolerance: 0.06, label: 'Chest up' },
+  medium: { headTop: 0.09, scale: 1.95, tolerance: 0.06, label: 'Chest up' }, // 5–12% above the head
   waist_up: { headTop: 0.1, scale: 1.35, tolerance: 0.05, label: 'Waist up' },
   full_body: { headTop: 0.07, scale: 0.86, tolerance: 0.05, label: 'Full body' },
 };

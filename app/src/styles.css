@@ -914,3 +914,10 @@ td:nth-child(4) { white-space: normal; min-width: 160px; }
 .camera.landscape .shutter::after { width: 52px; height: 52px; }
 .camera.landscape .shutter.recording::after { width: 26px; height: 26px; }
 .camera.landscape .aspect-menu { bottom: var(--space-2); }
+
+/* Tap to focus, hold to lock focus and exposure. */
+.focus-mark { position: absolute; width: 64px; height: 64px; margin: -32px 0 0 -32px; border: 2px solid var(--marigold-300); border-radius: 12px; pointer-events: none; animation: focus-in 0.25s ease-out; }
+.focus-mark.locked { border-color: var(--marigold-500); }
+.focus-mark span { position: absolute; top: -28px; left: 50%; transform: translateX(-50%); padding: 2px 8px; border-radius: 999px; background: var(--marigold-500); color: var(--ink-950); font-size: 12px; font-weight: 600; white-space: nowrap; }
+@keyframes focus-in { from { transform: scale(1.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .focus-mark { animation: none; } }
