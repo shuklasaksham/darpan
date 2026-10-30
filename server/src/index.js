@@ -188,7 +188,7 @@ app.get('/api/recent', requireUser, async (req, res, next) => {
          coalesce((SELECT json_agg(json_build_object('id', t.id, 'shotIndex', t.shot_index, 'score', t.score,
                                                      'available', t.file_path IS NOT NULL) ORDER BY t.shot_index)
                    FROM takes t WHERE t.plan_id = p.id AND t.kept), '[]') AS kept,
-         (SELECT json_build_object('id', r.id, 'status', r.status, 'durationSeconds', r.duration_seconds) FROM reels r
+         (SELECT json_build_object('id', r.id, 'status', r.status, 'durationSeconds', r.duration_seconds, 'filePath', r.file_path) FROM reels r
            WHERE r.plan_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS reel
        FROM shoot_plans p WHERE p.user_id = $1 ORDER BY p.created_at DESC LIMIT 12`,
       [req.user.id],
@@ -197,14 +197,22 @@ app.get('/api/recent', requireUser, async (req, res, next) => {
     const { rows: paths } = await pool.query('SELECT id, file_path FROM takes WHERE user_id = $1 AND kept AND file_path IS NOT NULL', [req.user.id]);
     const present = new Set();
     for (const t of paths) if (await fileExists(t.file_path)) present.add(Number(t.id));
+    // Same for the finished reel: "done" in the database doesn't mean the file is still here.
+    const reels = await Promise.all(
+      rows.map(async ({ reel }) => {
+        if (!reel) return null;
+        const { filePath, ...rest } = reel;
+        return { ...rest, available: rest.status === 'done' && (await fileExists(filePath)) };
+      }),
+    );
     res.json({
-      shoots: rows.map((r) => ({
+      shoots: rows.map((r, i) => ({
         planId: Number(r.id),
         createdAt: r.created_at,
         brief: r.brief,
         script: r.plan,
         kept: r.kept.map((k) => ({ ...k, available: present.has(Number(k.id)) })),
-        reel: r.reel,
+        reel: reels[i],
       })),
     });
   } catch (err) {
@@ -244,6 +252,9 @@ app.patch('/api/plans/:id/post', requireUser, async (req, res, next) => {
   }
 });
 
+// A shot can run 90 seconds; at a normal pace that's about 1,500 characters of script.
+const MAX_LINE_CHARS = 1500;
+
 app.put('/api/plans/:id', requireUser, async (req, res, next) => {
   const shots = req.body?.script?.shots;
   if (!pool) return res.status(503).json({ error: 'Saving scripts needs a database' });
@@ -261,7 +272,7 @@ app.put('/api/plans/:id', requireUser, async (req, res, next) => {
       shots: shots.map((s, i) => ({
         ...(plan.shots?.[i] ?? {}),
         title: text(s.title, 60) || `Shot ${i + 1}`,
-        line: text(s.line, 400),
+        line: text(s.line, MAX_LINE_CHARS),
         direction: text(s.direction, 200),
         framing: FRAMINGS.includes(s.framing) ? s.framing : 'medium',
         pose: typeof s.pose === 'string' ? s.pose : 'neutral',

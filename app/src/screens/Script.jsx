@@ -267,7 +267,7 @@ function ShotEditor({ shot, index, canRemove, onChange, onRemove, onDone }) {
   return (
     <div className="shot-edit">
       <input value={shot.title} onChange={(e) => onChange({ title: e.target.value })} aria-label={`Shot ${index + 1} name`} />
-      <textarea value={shot.line} rows={3} onChange={(e) => onChange({ line: e.target.value })} aria-label="What you say" autoFocus />
+      <textarea value={shot.line} rows={3} maxLength={1500} onChange={(e) => onChange({ line: e.target.value })} aria-label="What you say" autoFocus />
       <div className="row">
         <Picker
           label="Framing"
