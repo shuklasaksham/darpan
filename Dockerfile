@@ -13,8 +13,9 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production \
-    # Keep the V8 heap well under Render's 512 MB so ffmpeg has room too.
-    NODE_OPTIONS=--max-old-space-size=320 \
+    # The instance has 2 GB: up to 1 GB for the V8 heap, the rest for ffmpeg
+    # encoding a reel (about 0.5-0.8 GB at 4K).
+    NODE_OPTIONS=--max-old-space-size=1024 \
     STATIC_DIR=/srv/app/dist
 
 WORKDIR /srv/server

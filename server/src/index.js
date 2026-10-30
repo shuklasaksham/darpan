@@ -76,13 +76,15 @@ app.use(webhookRouter); // needs the raw body, so before express.json()
 app.use(express.json({ limit: '1mb' }));
 app.use('/api', loadUser);
 
+// Render restarts the server when this is slow, so it never waits long: the
+// database gets two seconds, and ffmpeg is checked once (see ffmpegAvailable).
 app.get('/api/health', async (_req, res) => {
   let db = false;
   if (pool) {
-    try {
-      await pool.query('SELECT 1');
-      db = true;
-    } catch {}
+    db = await Promise.race([
+      pool.query('SELECT 1').then(() => true, () => false),
+      new Promise((resolve) => setTimeout(() => resolve(false), 2000)),
+    ]);
   }
   res.json({
     ok: true,
@@ -849,6 +851,11 @@ app.use((err, _req, res, _next) => {
   console.error(err);
   res.status(500).json({ error: 'Something went wrong' });
 });
+
+// A stray rejected promise in background work (a pre-render, a copy, a sweep)
+// would otherwise end the process, and every creator gets a 502 while Render
+// restarts it. Log it, with its stack, and keep serving.
+process.on('unhandledRejection', (err) => console.error('Unhandled rejection (still running):', err));
 
 await migrate();
 await reconcilePro().catch((err) => console.error('Pro reconcile failed:', err.message));

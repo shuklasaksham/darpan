@@ -21,13 +21,18 @@ export async function probe(filePath) {
   };
 }
 
-export async function ffmpegAvailable() {
-  try {
-    await run('ffmpeg', ['-version']);
-    return true;
-  } catch {
-    return false;
-  }
+// Checked once: the health check is called every few seconds, and starting
+// ffmpeg each time is slow while a reel is being encoded.
+let available = null;
+export function ffmpegAvailable() {
+  available ??= run('ffmpeg', ['-version']).then(
+    () => true,
+    () => {
+      available = null; // try again next time
+      return false;
+    },
+  );
+  return available;
 }
 
 /** One JPEG frame from a video, for thumbnails. */
