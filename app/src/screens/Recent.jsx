@@ -49,9 +49,14 @@ export function shootProgress(s) {
   };
 }
 
+/** The finished reel's file is still on the server (older servers don't say: assume it is). */
+const reelReady = (s) => s.reel?.status === 'done' && s.reel.available !== false;
+
 function status(s) {
   const p = shootProgress(s);
-  if (s.reel?.status === 'done') return { text: `Ready${s.reel.durationSeconds ? ` · ${formatTime(s.reel.durationSeconds)}` : ''}`, good: true };
+  if (reelReady(s)) return { text: `Ready${s.reel.durationSeconds ? ` · ${formatTime(s.reel.durationSeconds)}` : ''}`, good: true };
+  // The reel was made but its video has been cleared; the script is kept, so it can be shot again.
+  if (s.reel?.status === 'done') return { text: p.ready ? 'Reel cleared · make it again' : 'Video cleared · shoot again', good: false };
   if (p.ready) return { text: 'All shots kept', good: true };
   if (p.kept === 0) return { text: 'Script only', good: false };
   return { text: `${p.kept} of ${p.total} shots`, good: false };
@@ -85,7 +90,7 @@ export function RecentReels({ shoots, onResume, onStart }) {
               <li key={s.planId}>
                 <button onClick={() => onResume(resumeState(s))}>
                   <Poster src={p.posterTakeId ? posterUrl(p.posterTakeId) : null}>
-                    {s.reel?.status === 'done' && (
+                    {reelReady(s) && (
                       <span className="badge" aria-hidden="true">
                         <Glyph name="reel" size={18} />
                       </span>
