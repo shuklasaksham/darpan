@@ -10,6 +10,7 @@ const REPEAT_MS = 9000; // before the same tip is said a second time
 const MAX_SAYS = 2; // rule 8: said twice and still ignored, stop repeating it
 const FIXED_MS = 1500; // gone this long counts as fixed (rule 5, the other way round)
 const PRAISE_SHOW_MS = 2000;
+const WAIT_FIRST_MS = 8000; // the loop waits this long for a stop that is still being looked at (Claude)
 
 // The order the voice goes round, one tip per stop, then round again: so no one
 // thing (a tilt, say) takes over. A stop with nothing to fix is skipped. Within
@@ -28,6 +29,8 @@ const STOP = {
   delivery: 'sound',
 };
 export const stopFor = (id) => STOP[CHECKS[id]?.area] ?? 'frame';
+// The line each stop says once when it's checked and fine: the praise of its first check.
+const FINE = { background: 'B1', light: 'L1', frame: 'F1' };
 
 /**
  * One coach per camera session. Each tick, `update` gets the failing checks
@@ -52,6 +55,9 @@ export class Coach {
     this.lastPraiseAt = -Infinity;
     this.lastSaidAt = -Infinity;
     this.turn = 0; // the next stop in LOOP
+    this.confirmed = new Set(); // stops already said to be fine this shot
+    this.fineSince = {}; // stop -> when it was last found fine (checked, nothing failing)
+    this.startedAt = null; // first update this shot
   }
 
   /** Tips the creator didn't act on after hearing them twice (rule 8). */
@@ -59,7 +65,9 @@ export class Coach {
     return [...this.ignored].map(([id, text]) => ({ id, text }));
   }
 
-  update(problems, { now, recording, language, quiet = false }) {
+  update(problems, { now, recording, language, quiet = false, checked = {}, pending = {} }) {
+    this.startedAt ??= now;
+    this.pending = pending;
     const failing = new Map();
     for (const p of problems) if (CHECKS[p.id] && !failing.has(p.id)) failing.set(p.id, p);
 
@@ -87,6 +95,13 @@ export class Coach {
       this.say(line, now);
     }
 
+    // A stop counts as fine once it has been checked and clean for 1.5 s, the
+    // same wait problems get, so a problem that is just appearing isn't missed.
+    for (const stop of LOOP) {
+      const clean = checked[stop] && ![...failing.keys()].some((id) => stopFor(id) === stop);
+      this.fineSince[stop] = clean ? (this.fineSince[stop] ?? now) : null;
+    }
+
     // Candidates: lasted 1.5 s and allowed now, in the standards' order. Tips
     // given up on (rule 8) are only shown, quietly, when nothing else is left.
     const lasting = [...failing.values()]
@@ -103,7 +118,8 @@ export class Coach {
     } else if (!quiet && this.canSpeak(now)) {
       // Between takes: the next stop in the loop that has something to say.
       const next = this.nextInLoop(candidates, now, language);
-      if (next) this.tell(next, now, language);
+      if (next?.fine) this.confirm(next.stop, now, language);
+      else if (next) this.tell(next, now, language);
     }
     if (!recording) {
       // On screen: the tip just said while it still needs fixing, else what comes next.
@@ -113,7 +129,8 @@ export class Coach {
     const top = this.shown && failing.get(this.shown.id);
 
     // Section 6: every check passes: say the final line once.
-    if (!recording && failing.size === 0 && !quiet) {
+    // Not before everything has been looked at (the background by Claude).
+    if (!recording && failing.size === 0 && !quiet && !Object.values(pending).some(Boolean)) {
       this.allSince ??= now;
       if (!this.allPassSaid && now - this.allSince >= PERSIST_MS) {
         this.allPassSaid = true;
@@ -158,17 +175,36 @@ export class Coach {
     return true;
   }
 
-  /** Going round LOOP from the next stop: the first stop with a tip to say. */
+  /**
+   * Going round LOOP from the next stop: the first stop with a tip to say, or
+   * that has been looked at, is fine, and hasn't been said to be fine yet.
+   */
   nextInLoop(candidates, now, language) {
     for (let i = 0; i < LOOP.length; i++) {
       const stop = (this.turn + i) % LOOP.length;
       const tip = candidates.find((p) => stopFor(p.id) === LOOP[stop] && this.sayable(p, now, language));
-      if (tip) {
+      // Still being looked at (the background, by Claude): wait for it rather
+      // than skip ahead, so the shot starts where the loop starts.
+      if (!tip && this.pending?.[LOOP[stop]] && now - this.startedAt < WAIT_FIRST_MS) return null;
+      // A problem here that is still in its 1.5 s wait: wait for it too.
+      if (!tip && [...this.since].some(([id, at]) => stopFor(id) === LOOP[stop] && now - at < PERSIST_MS && !this.ignored.has(id))) return null;
+      const since = this.fineSince[LOOP[stop]];
+      const fine = !tip && FINE[LOOP[stop]] && since != null && now - since >= PERSIST_MS && !this.confirmed.has(LOOP[stop]);
+      if (tip || fine) {
         this.turn = (stop + 1) % LOOP.length;
-        return tip;
+        return tip ?? { fine: true, stop: LOOP[stop] };
       }
     }
     return null;
+  }
+
+  /** Says once that a stop is fine: "Clean background. Nice.", "Great light." */
+  confirm(stop, now, language) {
+    this.confirmed.add(stop);
+    const line = lineFor(FINE[stop], language, null, 'praise');
+    this.praise = { id: FINE[stop], text: line.text, until: now + PRAISE_SHOW_MS };
+    this.lastPraiseAt = now;
+    this.say(line, now);
   }
 
   /** What the loop will come to next, for the screen (silent tips included). */

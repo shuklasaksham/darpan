@@ -96,17 +96,16 @@ function sideways(face, shape) {
   return [];
 }
 
-// --- 4.1, 4.2, 4.5 From the motion sensors -----------------------------------
+// --- 4.1, 4.2 From the motion sensors ------------------------------------------
 
 export const STEADY = { tilt: 3, tiltClear: 2, shake: 4, shakeClear: 3, jolt: 90, moved: 12 };
-export const ANGLE = { up: 25, down: -25, clear: 18, fullBodyDown: -12, fullBodyClear: -8 };
 
 /**
- * Orientation, level, stillness and camera height. `takeGravity` is the
+ * Orientation, level and stillness. `takeGravity` is the
  * phone's gravity when the take started, to notice it moving mid-take.
  * `active`: checks failing a moment ago, which must clear a lower bar to pass.
  */
-export function motionProblems(m, { aspect, facing, framing, recording, takeGravity, active = new Set() }) {
+export function motionProblems(m, { aspect, recording, takeGravity, active = new Set() }) {
   if (!m) return [];
   const problems = [];
   if (aspect < 0.99 && m.sideways) problems.push({ id: 'O1' });
@@ -117,13 +116,8 @@ export function motionProblems(m, { aspect, facing, framing, recording, takeGrav
     return problems;
   }
   if (m.shake > (active.has('S2') ? STEADY.shakeClear : STEADY.shake)) problems.push({ id: 'S2' });
-  // Positive: the camera looks up at the creator. The front camera looks out of
-  // the screen side; the back camera the other way.
-  const view = facing === 'user' ? m.pitch : -m.pitch;
-  if (view > (active.has('A1') ? ANGLE.clear : ANGLE.up)) problems.push({ id: 'A1' });
-  else if (framing === 'full_body') {
-    if (view < (active.has('A3') ? ANGLE.fullBodyClear : ANGLE.fullBodyDown)) problems.push({ id: 'A3' });
-  } else if (view < (active.has('A2') ? -ANGLE.clear : ANGLE.down)) problems.push({ id: 'A2' });
+  // Camera height (A1–A3) is Claude's call, from the picture: how far the phone
+  // leans says little about how high it is, and a phone leaning on a stand is normal.
   return problems;
 }
 
