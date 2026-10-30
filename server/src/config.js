@@ -49,6 +49,7 @@ export const config = {
   // Takes must survive redeploys: use a Render Disk mounted at /var/data when
   // there is one; the container's temp folder is wiped on every deploy.
   uploadDir: process.env.UPLOAD_DIR || pickUploadDir(),
-  maxUploadBytes: Number(process.env.MAX_UPLOAD_MB || 200) * 1024 * 1024,
+  // A minute of 4K from the phone is about 200 MB.
+  maxUploadBytes: Number(process.env.MAX_UPLOAD_MB || 600) * 1024 * 1024,
   staticDir: process.env.STATIC_DIR || path.resolve(import.meta.dirname, '../../app/dist'),
 };

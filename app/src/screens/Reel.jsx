@@ -694,8 +694,10 @@ function Finished({ reel, poster, captions, planId, postCaption, hashtags, onPos
   const [file, setFile] = useState(null);
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false); // the 1080p / 720p choice is open
-  // Full HD reels can also be saved as a smaller 720p file.
-  const offersSmaller = Boolean(reel.width && reel.height && Math.min(reel.width, reel.height) > 720);
+  // A reel can also be saved smaller: 1080p (Instagram's size) and 720p, below its own.
+  const shortEdge = reel.width && reel.height ? Math.min(reel.width, reel.height) : 0;
+  const sizes = [shortEdge, ...[1080, 720].filter((s) => s < shortEdge)].filter(Boolean);
+  const offersSmaller = sizes.length > 1;
 
   // Have the file ready so Share opens instantly (browsers only allow the share
   // sheet right after a tap). Fetched a few seconds in, so the video starts
@@ -796,20 +798,21 @@ function Finished({ reel, poster, captions, planId, postCaption, hashtags, onPos
         <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label="Save to phone" onClick={() => setSaving(false)}>
           <div className="sheet studio save-sheet" onClick={(e) => e.stopPropagation()}>
             <h2>Save to phone</h2>
-            <a className="button primary block" href={`${src}?download=1`} download={`darpan-reel-${reel.id}.mp4`} onClick={() => setSaving(false)}>
-              <span className="save-option">
-                <b>1080p · Full HD</b>
-                <small>Best for Instagram and Shorts</small>
-              </span>
-              <Glyph name="save" size={20} />
-            </a>
-            <a className="button secondary block" href={`${src}?download=1&quality=720`} download={`darpan-reel-${reel.id}-720p.mp4`} onClick={() => setSaving(false)}>
-              <span className="save-option">
-                <b>720p · HD</b>
-                <small>Smaller file, quicker on mobile data</small>
-              </span>
-              <Glyph name="save" size={20} />
-            </a>
+            {sizes.map((s, i) => (
+              <a
+                key={s}
+                className={`button ${i === 0 ? 'primary' : 'secondary'} block`}
+                href={i === 0 ? `${src}?download=1` : `${src}?download=1&quality=${s}`}
+                download={i === 0 ? `darpan-reel-${reel.id}.mp4` : `darpan-reel-${reel.id}-${s}p.mp4`}
+                onClick={() => setSaving(false)}
+              >
+                <span className="save-option">
+                  <b>{SIZE_NAMES[s] ?? `${s}p`}</b>
+                  <small>{i === 0 ? 'Full camera quality' : s === 1080 ? 'Best for Instagram and Shorts' : 'Smaller file, quicker on mobile data'}</small>
+                </span>
+                <Glyph name="save" size={20} />
+              </a>
+            ))}
             <button className="link" onClick={() => setSaving(false)}>
               Cancel
             </button>
@@ -819,6 +822,8 @@ function Finished({ reel, poster, captions, planId, postCaption, hashtags, onPos
     </main>
   );
 }
+
+const SIZE_NAMES = { 2160: '4K · 2160p', 1440: '1440p · QHD', 1080: '1080p · Full HD', 720: '720p · HD' };
 
 // Letters (with Devanagari vowel signs), digits and underscores, as Instagram allows.
 const cleanTag = (value) => value.replace(/^#+/, '').replace(/[^\p{L}\p{M}\p{N}_]/gu, '');
