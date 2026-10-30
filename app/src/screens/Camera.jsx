@@ -64,7 +64,9 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   const loudTimerRef = useRef(0);
 
   const [facing, setFacing] = useState('user');
-  const [aspectKey, setAspectKey] = useState('9:16');
+  // The phone held sideways: the camera lays out for landscape and the reel goes 16:9.
+  const [landscape, setLandscape] = useState(() => window.matchMedia?.('(orientation: landscape)').matches ?? false);
+  const [aspectKey, setAspectKey] = useState(() => (window.matchMedia?.('(orientation: landscape)').matches ? '16:9' : '9:16'));
   const [showAspects, setShowAspects] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const [permission, setPermission] = useState('checking'); // checking | ask | go | blocked
@@ -696,6 +698,21 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   const planSeconds = Number(shot?.duration_seconds) || 0;
   const busy = recording || countdown > 0;
 
+  useEffect(() => {
+    const mq = window.matchMedia?.('(orientation: landscape)');
+    if (!mq) return;
+    const onChange = () => setLandscape(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  // Turning the phone switches between 9:16 and 16:9 (a square stays square).
+  // Mid-take the frame stays as it started.
+  useEffect(() => {
+    if (busy) return;
+    setAspectKey((k) => (landscape ? (ASPECTS[k] < 1 ? '16:9' : k) : ASPECTS[k] > 1 ? '9:16' : k));
+  }, [landscape]);
+
   if ((permission === 'ask' || permission === 'blocked') && !take && !reelOpen) {
     return (
       <CameraPermission
@@ -709,7 +726,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   }
 
   return (
-    <div className="camera studio">
+    <div className={`camera studio ${landscape ? 'landscape' : ''}`}>
       <div className="stage">
         <div className="stage-frame" ref={stageRef} style={{ '--aspect': aspect }}>
           <video ref={videoRef} className={mirrored ? 'mirrored' : ''} autoPlay playsInline muted onLoadedMetadata={() => setVideoReady(true)} />
@@ -803,6 +820,11 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
               <span className="eyebrow">Your line</span>
               <span className="say">{shot.line}</span>
             </button>
+          )}
+          {aspect > 1 && !landscape && !busy && (
+            <p className="coach-pill">
+              <Glyph name="rotate" size={18} /> Turn your phone sideways for landscape
+            </p>
           )}
           {!countdown && <CoachPill tip={tip} recording={recording} visionState={visionState} hasShot={Boolean(shot)} lostNotice={lostNotice} onDismissLost={() => setLostNotice(0)} />}
           {!recording && (

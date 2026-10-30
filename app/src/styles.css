@@ -895,3 +895,22 @@ td:nth-child(4) { white-space: normal; min-width: 160px; }
 .save-sheet .button { justify-content: space-between; text-align: left; min-height: 64px; }
 .save-option { display: flex; flex-direction: column; gap: 2px; }
 .save-option small { font-size: 13px; font-weight: 500; opacity: 0.7; }
+
+/* Camera held sideways: the script and shot on the left, coach and shutter on
+   the right, the creator's face clear in the middle. */
+.camera.landscape .cam-scrim-top { inset: 0 auto 0 0; width: min(40vw, 360px); height: auto; background: linear-gradient(to right, rgb(10 10 10 / 0.5), transparent); }
+.camera.landscape .cam-ui { flex-direction: row; align-items: stretch; }
+.camera.landscape .cam-top { width: min(38vw, 340px); padding: calc(8px + var(--safe-t)) 12px 8px calc(12px + env(safe-area-inset-left, 0px)); gap: var(--space-2); }
+.camera.landscape .cam-middle { flex: 1; }
+.camera.landscape .cam-foot { width: min(38vw, 340px); justify-content: flex-end; gap: var(--space-2); padding: calc(8px + var(--safe-t)) calc(12px + env(safe-area-inset-right, 0px)) calc(10px + var(--safe-b)) 12px; overflow-y: auto; }
+.camera.landscape .cam-tools { flex-wrap: wrap; gap: var(--space-2); }
+.camera.landscape .coach-pill { max-width: 100%; font-size: 14px; padding: 8px 12px; }
+.camera.landscape .line-peek { padding: 8px 12px; }
+.camera.landscape .line-peek .say { font-size: 15px; }
+.camera.landscape .teleprompter { padding: var(--space-3) var(--space-4) var(--space-2); }
+.camera.landscape .teleprompter.size-1 .lines { font-size: 20px; }
+.camera.landscape .teleprompter.size-2 .lines { font-size: 24px; }
+.camera.landscape .shutter { width: 68px; height: 68px; min-height: 68px; }
+.camera.landscape .shutter::after { width: 52px; height: 52px; }
+.camera.landscape .shutter.recording::after { width: 26px; height: 26px; }
+.camera.landscape .aspect-menu { bottom: var(--space-2); }

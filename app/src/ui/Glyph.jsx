@@ -119,6 +119,13 @@ const GLYPHS = {
       <path className={A} d="M10 20.5a2 2 0 0 0 4 0" />
     </>
   ),
+  rotate: (
+    <>
+      <rect x="4" y="3" width="10" height="16" rx="2.5" />
+      <path className={A} d="M17.5 9.5a6 6 0 0 1 1 9.4" />
+      <path className={A} d="M15.6 17.4l2.9 1.5-.5 3" />
+    </>
+  ),
   copy: (
     <>
       <rect x="8.5" y="8.5" width="11.5" height="11.5" rx="3" />
