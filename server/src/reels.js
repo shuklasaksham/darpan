@@ -142,6 +142,24 @@ export function reelSize(aspect, maxLongEdge = 1920) {
 }
 
 /**
+ * The reel's frame for a take: the camera's own resolution once cropped to the
+ * reel's shape, never below 1080p and never above `maxLongEdge` (4K). A 4K
+ * phone gives a 2160×3840 reel; a 1080p camera gives 1080×1920 as before.
+ */
+export function reelSizeFor(take, maxLongEdge = 3840) {
+  const aspect = takeAspect(take);
+  const w = Number(take.width) || 0;
+  const h = Number(take.height) || 0;
+  // The short edge of the camera image after cropping it to the reel's shape.
+  const cropShort = w && h ? (w / h > aspect ? Math.min(h * aspect, h) : Math.min(w, w / aspect)) : 0;
+  const short = Math.min((maxLongEdge * 9) / 16, Math.max(1080, cropShort));
+  return reelSize(aspect, (short * 16) / 9);
+}
+
+/** Peak bitrate in kbit/s: Instagram's ~6 Mbps at 1080p, scaled by pixel count (about 20 Mbps at 4K). */
+const maxrateFor = (width, height) => Math.round(Math.min(24000, Math.max(3500, (6000 * width * height) / (1080 * 1920))));
+
+/**
  * Caption lines for one take: filler words dropped, spelled for the script's
  * language (see captionWord), grouped into short chunks timed to the speech. `edits` holds
  * the creator's fixes by word index; an empty string drops the word, and an
@@ -314,8 +332,7 @@ async function encodePiece({ take, trim, size, assPath, tag, out, onProgress }) 
     `fps=${FPS}`,
     ...(assPath ? [`subtitles=filename='${filterPath(assPath)}':fontsdir='${filterPath(FONT_DIR)}'`] : []),
   ].join(',');
-  // About 6 Mbps for 1080p and 3.5 for 720p: Instagram's own targets.
-  const maxrate = width * height >= 1_500_000 ? 6000 : 3500;
+  const maxrate = maxrateFor(width, height);
 
   // Every piece gets identical stream settings so they can be joined without
   // re-encoding; a take without sound gets a silent track for the same reason.
@@ -421,7 +438,7 @@ export async function ensurePiece(take, { captions = true, tag = true, size, hoo
  */
 export function warmPiece(take, plan, hook = null) {
   if (!take?.file_path) return;
-  const size = reelSize(takeAspect(take), plan.maxLongEdge);
+  const size = reelSizeFor(take, plan.maxLongEdge);
   ensurePiece(take, { captions: true, tag: plan.tag !== false, size, hook }).catch((err) => {
     if (!err.missing) console.error(`Pre-render of take ${take.id} failed:`, err.message);
   });
@@ -429,12 +446,14 @@ export function warmPiece(take, plan, hook = null) {
 
 // --- Download sizes -----------------------------------------------------------
 
+/** Smaller sizes a finished reel can also be saved in (short edge, in pixels). */
+export const SAVE_SIZES = [1080, 720];
 const copies = new Map(); // copy path -> promise
 
 /**
  * A finished reel at a smaller size for saving to the phone: the short edge
- * scaled to `short` (720 makes 9:16 into 720×1280). Made once, next to the
- * reel; a reel already that small comes back as it is.
+ * scaled to `short` (1080 makes 9:16 into 1080×1920, 720 into 720×1280).
+ * Made once, next to the reel; a reel already that small comes back as it is.
  */
 export async function reelCopy(reel, short) {
   const scale = short / Math.min(reel.width, reel.height);
@@ -443,13 +462,15 @@ export async function reelCopy(reel, short) {
   if (await exists(out)) return out;
   if (!copies.has(out)) {
     const even = (n) => Math.max(2, Math.round(n / 2) * 2);
+    const [w, h] = [even(reel.width * scale), even(reel.height * scale)];
+    const maxrate = maxrateFor(w, h);
     const tmp = `${out}.part.mp4`;
     const run = async () => {
       try {
         await ffmpeg([
           '-y', '-threads', THREADS, '-i', reel.file_path,
-          '-vf', `scale=${even(reel.width * scale)}:${even(reel.height * scale)}:flags=lanczos`,
-          '-c:v', 'libx264', '-preset', PRESET, '-crf', '21', '-maxrate', '3500k', '-bufsize', '7000k',
+          '-vf', `scale=${w}:${h}:flags=lanczos`,
+          '-c:v', 'libx264', '-preset', PRESET, '-crf', '21', '-maxrate', `${maxrate}k`, '-bufsize', `${maxrate * 2}k`,
           '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-threads', THREADS,
           '-c:a', 'copy', '-movflags', '+faststart', tmp,
         ]);
@@ -481,8 +502,8 @@ async function buildReel(reel, job) {
     await fs.promises.mkdir(dir, { recursive: true });
     job.status = 'working';
     const takes = reel.takes;
-    // One frame for the whole reel: the first shot's aspect ratio at the plan's size.
-    const size = reelSize(takeAspect(takes[0]), reel.maxLongEdge);
+    // One frame for the whole reel: the first shot's shape and resolution.
+    const size = reelSizeFor(takes[0], reel.maxLongEdge);
     const settings = { captions: reel.captions, tag: reel.tag !== false, size };
     const lengths = takes.map((t) => {
       const trim = trimFor(t);
@@ -523,8 +544,10 @@ async function buildReel(reel, job) {
     job.progress = 1;
     job.stage = 'Your reel is ready';
     await setStatus('done', { filePath, ...size, duration: total });
-    // Have the smaller copy ready before anyone asks to save it.
-    reelCopy({ id: reel.id, file_path: filePath, ...size }, 720).catch((err) => console.error(`720p copy of reel ${reel.id} failed:`, err.message));
+    // Have the smaller copies ready before anyone asks to save them.
+    for (const short of SAVE_SIZES) {
+      if (short < Math.min(size.width, size.height)) reelCopy({ id: reel.id, file_path: filePath, ...size }, short).catch((err) => console.error(`${short}p copy of reel ${reel.id} failed:`, err.message));
+    }
   } catch (err) {
     console.error(`Reel ${reel.id} failed:`, err.message);
     job.stage = 'Something went wrong';

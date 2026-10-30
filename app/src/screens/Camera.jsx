@@ -21,9 +21,10 @@ const TICK_MS = 200;
 const TICK_RECORDING_MS = 400;
 const DETECT_EDGE = 360; // long edge of the frame the models see
 const LIGHT_EDGE = 240;
-// Takes are recorded straight from the camera at its own resolution (typically
-// 1080x1920); this bitrate keeps that detail without bloating the upload.
-const VIDEO_BPS = 10_000_000;
+// Takes are recorded straight from the camera at its full resolution (up to 4K).
+// The bitrate follows the size: 10 Mbps at 1080p, about 30 Mbps at 4K.
+const MAX_CAMERA_EDGE = 3840;
+const videoBpsFor = (width, height) => Math.round(Math.min(30e6, Math.max(10e6, (10e6 * width * height) / (1920 * 1080))));
 const AUDIO_TYPES = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg;codecs=opus'];
 
 /** Centre crop of the camera image to the chosen aspect ratio, in source pixels. */
@@ -63,7 +64,9 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   const loudTimerRef = useRef(0);
 
   const [facing, setFacing] = useState('user');
-  const [aspectKey, setAspectKey] = useState('9:16');
+  // The phone held sideways: the camera lays out for landscape and the reel goes 16:9.
+  const [landscape, setLandscape] = useState(() => window.matchMedia?.('(orientation: landscape)').matches ?? false);
+  const [aspectKey, setAspectKey] = useState(() => (window.matchMedia?.('(orientation: landscape)').matches ? '16:9' : '9:16'));
   const [showAspects, setShowAspects] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const [permission, setPermission] = useState('checking'); // checking | ask | go | blocked
@@ -179,7 +182,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
     }
     navigator.mediaDevices
       .getUserMedia({
-        video: { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 }, resizeMode: 'none' },
+        video: { facingMode: facing, width: { ideal: MAX_CAMERA_EDGE }, height: { ideal: (MAX_CAMERA_EDGE * 9) / 16 }, frameRate: { ideal: 30 }, resizeMode: 'none' },
         audio: true,
       })
       .then((stream) => {
@@ -188,8 +191,16 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
         videoRef.current.srcObject = stream;
         // Some phones start zoomed in; use the widest zoom the camera allows.
         const track = stream.getVideoTracks()[0];
-        const zoom = track?.getCapabilities?.().zoom;
-        if (zoom) track.applyConstraints({ advanced: [{ zoom: zoom.min }] }).catch(() => {});
+        const caps = track?.getCapabilities?.() ?? {};
+        if (caps.zoom) track.applyConstraints({ advanced: [{ zoom: caps.zoom.min }] }).catch(() => {});
+        // Browsers often start below what the camera can do; ask for its largest
+        // size (capped at 4K) so takes match the camera app's own quality.
+        const got = track?.getSettings?.() ?? {};
+        const maxW = Math.min(caps.width?.max ?? 0, MAX_CAMERA_EDGE);
+        const maxH = Math.min(caps.height?.max ?? 0, MAX_CAMERA_EDGE);
+        if (maxW && maxH && maxW * maxH > (got.width ?? 0) * (got.height ?? 0)) {
+          track.applyConstraints({ width: { ideal: maxW }, height: { ideal: maxH }, frameRate: { ideal: 30 } }).catch(() => {});
+        }
       })
       .catch((err) => {
         if (cancelled) return;
@@ -526,7 +537,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
     const mimeType = pickMimeType(VIDEO_TYPES);
     const recorder = new MediaRecorder(stream, {
       ...(mimeType && { mimeType }),
-      videoBitsPerSecond: VIDEO_BPS,
+      videoBitsPerSecond: videoBpsFor(videoRef.current?.videoWidth || 1920, videoRef.current?.videoHeight || 1080),
       audioBitsPerSecond: 128_000,
     });
     // A second, audio-only recording of a few hundred KB: the take is scored from
@@ -687,6 +698,21 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   const planSeconds = Number(shot?.duration_seconds) || 0;
   const busy = recording || countdown > 0;
 
+  useEffect(() => {
+    const mq = window.matchMedia?.('(orientation: landscape)');
+    if (!mq) return;
+    const onChange = () => setLandscape(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  // Turning the phone switches between 9:16 and 16:9 (a square stays square).
+  // Mid-take the frame stays as it started.
+  useEffect(() => {
+    if (busy) return;
+    setAspectKey((k) => (landscape ? (ASPECTS[k] < 1 ? '16:9' : k) : ASPECTS[k] > 1 ? '9:16' : k));
+  }, [landscape]);
+
   if ((permission === 'ask' || permission === 'blocked') && !take && !reelOpen) {
     return (
       <CameraPermission
@@ -700,7 +726,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
   }
 
   return (
-    <div className="camera studio">
+    <div className={`camera studio ${landscape ? 'landscape' : ''}`}>
       <div className="stage">
         <div className="stage-frame" ref={stageRef} style={{ '--aspect': aspect }}>
           <video ref={videoRef} className={mirrored ? 'mirrored' : ''} autoPlay playsInline muted onLoadedMetadata={() => setVideoReady(true)} />
@@ -794,6 +820,11 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
               <span className="eyebrow">Your line</span>
               <span className="say">{shot.line}</span>
             </button>
+          )}
+          {aspect > 1 && !landscape && !busy && (
+            <p className="coach-pill">
+              <Glyph name="rotate" size={18} /> Turn your phone sideways for landscape
+            </p>
           )}
           {!countdown && <CoachPill tip={tip} recording={recording} visionState={visionState} hasShot={Boolean(shot)} lostNotice={lostNotice} onDismissLost={() => setLostNotice(0)} />}
           {!recording && (

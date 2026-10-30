@@ -13,7 +13,7 @@ export function LegalFooter() {
   );
 }
 
-const FREE = ['3 reels a month', 'Scripts for your niche and trends', 'Live camera coach', "Director's notes on every take", 'Full HD 1080p, with a small “Shot with darpan” tag'];
+const FREE = ['3 reels a month', 'Scripts for your niche and trends', 'Live camera coach', "Director's notes on every take", 'Your camera’s full quality, up to 4K, with a small “Shot with darpan” tag'];
 const PRO = ['Unlimited reels for 30 days', 'Everything in Free', 'No tag on your reels', 'Priority rendering'];
 
 const HOW = [
