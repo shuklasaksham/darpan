@@ -25,7 +25,8 @@ export class Coach {
   reset() {
     this.since = new Map(); // id -> first seen
     this.gone = new Map(); // id -> first not seen (for praise)
-    this.said = new Map(); // id -> { count, at }
+    this.said = new Map(); // id -> { count, at }: counts the whole shot, fixed or not
+    this.praised = new Set(); // rule 7: praise each fix once
     this.ignored = new Map(); // id -> shown text, for the notes after the take
     this.shown = null; // { id, at, text }
     this.praise = null; // { id, text, until }
@@ -58,9 +59,9 @@ export class Coach {
     for (const [id, at] of [...this.gone]) {
       if (now - at < FIXED_MS) continue;
       this.gone.delete(id);
-      this.said.delete(id);
       this.ignored.delete(id);
-      if (recording || !CHECKS[id].praise) continue;
+      if (recording || !CHECKS[id].praise || this.praised.has(id)) continue;
+      this.praised.add(id);
       const line = lineFor(id, language, null, 'praise');
       this.praise = { id, text: line.text, until: now + PRAISE_SHOW_MS };
       this.lastPraiseAt = now;
