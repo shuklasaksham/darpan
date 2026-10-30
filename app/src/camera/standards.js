@@ -51,7 +51,9 @@ export const CHECKS = {
   F1: { area: 'framing', tag: 'critical', glyph: 'frame', en: 'Move back a little.', hinglish: 'Thoda peeche ho jao.', hi: 'थोड़ा पीछे हो जाओ।', praise: SPOT },
   F2: { area: 'framing', tag: 'before', glyph: 'frame', en: 'Come one step closer.', hinglish: 'Ek kadam aage aao.', hi: 'एक कदम आगे आओ।', praise: SPOT },
   F3: { area: 'framing', tag: 'critical', glyph: 'frame', en: 'Step back so your whole head is in.', hinglish: 'Peeche jao, poora sar frame mein aaye.', hi: 'पीछे जाओ, ताकि पूरा सिर फ़्रेम में आए।', hs: 'पीछे जाओ, पूरा सर फ़्रेम में आए।', praise: HOLD },
-  F4: { area: 'framing', tag: 'before', glyph: 'frame', en: 'Raise the phone a little.', hinglish: 'Phone thoda upar karo.', hi: 'फ़ोन थोड़ा ऊपर करो।', praise: PERFECT },
+  // The standards say "Raise the phone a little", but too much space above the
+  // head means the camera sits too high: raising it adds more. Lowering fixes it.
+  F4: { area: 'framing', tag: 'before', glyph: 'frame', en: 'Lower the phone a little.', hinglish: 'Phone thoda neeche karo.', hi: 'फ़ोन थोड़ा नीचे करो।', praise: PERFECT },
   F5: { area: 'framing', tag: 'critical', glyph: 'frame', en: 'Move a little to your {x}.', hinglish: 'Thoda apne {x} aao.', hi: 'थोड़ा अपने {x} आओ।', praise: { en: 'Centred. Hold it there.', hinglish: 'Bilkul beech mein.', hi: 'बिल्कुल बीच में।' } },
   F6: { area: 'framing', tag: 'critical', glyph: 'frame', en: 'Step back so your full {x} shows.', hinglish: 'Peeche jao, poora {x} dikhe.', hi: 'पीछे जाओ, ताकि पूरा {x} दिखे।', hs: 'पीछे जाओ, पूरा {x} दिखे।', praise: { en: 'Now we can see it all.', hinglish: 'Ab poora dikh raha hai.', hi: 'अब पूरा दिख रहा है।' } },
   F7: { area: 'framing', tag: 'before', glyph: 'frame', en: 'Move up a bit; the caption will cover you.', hinglish: 'Thoda upar aao, caption aa jayega.', hi: 'थोड़ा ऊपर आओ, नीचे कैप्शन आएगा।', hs: 'थोड़ा ऊपर आओ, कैप्शन आ जाएगा।', praise: { en: 'Clear of the caption.', hinglish: 'Ab caption se bach gaye.', hi: 'अब कैप्शन से बच गए।' } },
@@ -77,7 +79,6 @@ export const CHECKS = {
   // 4.8 Lens and camera settings
   C1: { area: 'lens', tag: 'before', glyph: 'frame', en: 'Wipe your camera lens.', hinglish: 'Camera lens saaf kar lo.', hi: 'कैमरे का लेंस साफ़ कर लो।', hs: 'कैमरा लेंस साफ़ कर लो।', praise: { en: 'Sharp now.', hinglish: 'Ab ekdum saaf dikh raha hai.', hi: 'अब एकदम साफ़ दिख रहा है।' } },
   C2: { area: 'lens', tag: 'before', glyph: 'frame', en: 'Tap on your face to focus.', hinglish: 'Apne face pe tap karo.', hi: 'अपने चेहरे पर टैप करो।', hs: 'अपने फ़ेस पे टैप करो।', praise: { en: 'In focus.', hinglish: 'Focus sahi hai.', hi: 'फ़ोकस सही है।' } },
-  C3: { area: 'lens', tag: 'before', glyph: 'frame', en: 'Set the camera to 1080p, 30 fps.', hinglish: 'Camera 1080p, 30 fps pe set karo.', hi: 'कैमरा 1080p, 30 fps पर सेट करो।', hs: 'कैमरा 1080p, 30 fps पे सेट करो।', praise: { en: 'Settings look right.', hinglish: 'Settings sahi hain.', hi: 'सेटिंग्स सही हैं।' } },
 
   // 4.9 Outfit and look: only how the outfit fits the topic or shows on camera.
   D1: { area: 'outfit', tag: 'before', glyph: 'frame', en: 'A neat shirt would suit this topic.', hinglish: 'Is topic ke liye ek neat shirt try karo.', hi: 'इस टॉपिक के लिए एक साफ़-सुथरी शर्ट पहनकर देखो।', hs: 'इस टॉपिक के लिए एक नीट शर्ट ट्राई करो।', praise: { en: 'Looks sharp.', hinglish: 'Bahut accha lag raha hai.', hi: 'बहुत अच्छा लग रहा है।' } },

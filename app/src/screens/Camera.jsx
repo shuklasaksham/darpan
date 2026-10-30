@@ -223,25 +223,15 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
         const got = track?.getSettings?.() ?? {};
         const maxW = Math.min(caps.width?.max ?? 0, MAX_CAMERA_EDGE);
         const maxH = Math.min(caps.height?.max ?? 0, MAX_CAMERA_EDGE);
-        const raised =
-          maxW && maxH && maxW * maxH > (got.width ?? 0) * (got.height ?? 0)
-            ? track.applyConstraints({ width: { ideal: maxW }, height: { ideal: maxH }, frameRate: { ideal: 30 } }).catch(() => {})
-            : Promise.resolve();
+        if (maxW && maxH && maxW * maxH > (got.width ?? 0) * (got.height ?? 0)) {
+          track.applyConstraints({ width: { ideal: maxW }, height: { ideal: maxH }, frameRate: { ideal: 30 } }).catch(() => {});
+        }
         const supported = navigator.mediaDevices.getSupportedConstraints?.() ?? {};
         camRef.current = {
           focusable: Boolean(supported.pointsOfInterest && caps.focusMode?.some((m) => m === 'single-shot' || m === 'continuous')),
           lockable: Boolean(supported.pointsOfInterest && caps.exposureMode?.includes('single-shot')),
           locked: false,
-          lowSettings: false,
         };
-        // C3: still under 1080p once the app asked for the camera's best, on a
-        // camera that can do 1080p.
-        raised.then(() => {
-          const now = track.getSettings?.() ?? {};
-          const short = Math.min(now.width ?? 0, now.height ?? 0);
-          const canShort = Math.min(caps.width?.max ?? 0, caps.height?.max ?? 0);
-          camRef.current.lowSettings = short > 0 && short < 1080 && canShort >= 1080;
-        });
       })
       .catch((err) => {
         if (cancelled) return;
@@ -303,19 +293,18 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
     Motion.permit();
   };
 
-  // What this camera lets the creator do (tap to focus, hold to lock), and
-  // whether it records below 1080p or 24 fps (C3).
-  const camRef = useRef({ focusable: false, lockable: false, locked: false, lowSettings: false });
+  // What this camera lets the creator do: tap to focus, hold to lock.
+  const camRef = useRef({ focusable: false, lockable: false, locked: false });
 
   // Claude's look at the frame: the checks only a picture can show (mixed light,
   // background, outfit, the topic in frame). `light` remembers the light it
   // judged, so its verdict stops applying once the light changes.
-  const claudeRef = useRef({ busy: false, lastAt: 0, key: null, luma: null, light: null, issues: [], noise: null });
+  const claudeRef = useRef({ busy: false, lastAt: 0, key: null, looked: false, luma: null, light: null, issues: [], noise: null });
 
   useEffect(() => {
     // New shot, ratio or camera: Claude's earlier look no longer applies, and
     // the coach starts the shot fresh.
-    Object.assign(claudeRef.current, { key: null, luma: null, light: null, issues: [], noise: null });
+    Object.assign(claudeRef.current, { key: null, looked: false, luma: null, light: null, issues: [], noise: null });
     setClaude(null);
     coachRef.current?.reset();
   }, [shotIndex, aspectKey, facing]);
@@ -363,26 +352,6 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
     } catch {}
     meterRef.current = meter;
 
-    // Frames actually delivered per second (dim light makes phones slow down).
-    let frames = 0;
-    let fpsSince = performance.now();
-    let fps = null;
-    let slowWindows = 0; // 3-second windows in a row under 24 fps
-    const video = videoRef.current;
-    const countFrame = () => {
-      if (stopped) return;
-      frames++;
-      const t = performance.now();
-      if (t - fpsSince >= 3000) {
-        fps = (frames * 1000) / (t - fpsSince);
-        slowWindows = fps < 24 && document.visibilityState === 'visible' ? slowWindows + 1 : 0;
-        frames = 0;
-        fpsSince = t;
-      }
-      video.requestVideoFrameCallback(countFrame);
-    };
-    if (video?.requestVideoFrameCallback) video.requestVideoFrameCallback(countFrame);
-
     const sendFrameCheck = async (reason, readings) => {
       const c = claudeRef.current;
       const { planned: p, shotIndex: idx, aspect: forAspect } = live.current;
@@ -415,6 +384,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
         result.ms = Math.round(performance.now() - started);
         c.light = { ok: result.light_ok, face: readings?.face ?? null, background: readings?.background ?? null };
         c.issues = result.issues;
+        c.looked = true;
         c.noise = result.noise;
         c.luma = readings?.luma ?? null;
         setClaude(result);
@@ -516,7 +486,7 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
       // 4.1 Orientation and 4.2 steady (motion sensors; the screen's own
       // orientation when the phone has none).
       problems.push(
-        ...motionProblems(m, { aspect: s.aspect, facing: s.facing, framing: s.framing, recording: s.recording, takeGravity: takeGravityRef.current, active: failingIds }),
+        ...motionProblems(m, { aspect: s.aspect, recording: s.recording, takeGravity: takeGravityRef.current, active: failingIds }),
       );
       if (!m) {
         if (s.aspect < 0.99 && s.landscape) problems.push({ id: 'O1' });
@@ -542,7 +512,6 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
       } else {
         exposure.clear();
       }
-      if (cam.lowSettings || slowWindows >= 2) problems.push({ id: 'C3' });
 
       // 4.4 Distance and framing.
       if (faceDetector) {
@@ -573,7 +542,12 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
 
       failingIds = new Set(problems.map((p) => p.id));
       const coach = coachRef.current;
-      const shown = coach ? coach.update(problems, { now, recording: s.recording, language: s.language, quiet: s.countdown > 0 }) : null;
+      // Which loop stops have actually been looked at, so the coach can say
+      // they're fine: background once Claude has looked, light and frame once
+      // someone is in view.
+      const checked = { background: c.looked, light: readings.face != null, frame: Boolean(face || lastBody) };
+      const pending = { background: Boolean(health?.scripts) && !c.looked };
+      const shown = coach ? coach.update(problems, { now, recording: s.recording, language: s.language, quiet: s.countdown > 0, checked, pending }) : null;
       const tipKey = shown ? `${shown.id}|${shown.text}|${shown.praise ? 1 : 0}|${shown.quiet ? 1 : 0}` : null;
       if (tipKey !== lastTipKey) {
         lastTipKey = tipKey;
@@ -620,7 +594,6 @@ export default function Camera({ shoot, planned: initialPlan, initialKept, healt
           readings,
           sound,
           motion: m,
-          fps,
           moving,
           problems: problems.map((p) => p.id),
           ignored: coach?.ignoredTips().map((t) => t.id) ?? [],
@@ -1450,7 +1423,7 @@ function DebugPanel({ info, claude, visionState }) {
         `light face ${f(r.face)}  bg ${f(r.background)}  frame ${f(r.frame)}  contrast ${f(r.contrast)}`,
         `forehead ${f(r.forehead)}  under eyes ${f(r.underEyes)}  sides ${f(r.sideA)}/${f(r.sideB)}  sharp ${f(r.sharpness, 4)} face ${f(r.faceSharpness, 4)} bg ${f(r.backgroundSharpness, 4)}`,
         info.motion ? `motion ${info.motion.sideways ? 'sideways' : 'upright'}  tilt ${f(info.motion.tilt, 1)}°  pitch ${f(info.motion.pitch, 1)}°  shake ${f(info.motion.shake, 1)}°/s  jolt ${f(info.motion.jolt, 0)}` : 'motion —',
-        `fps ${f(info.fps, 1)}  background moving ${f(info.moving * 100, 1)}%`,
+        `background moving ${f(info.moving * 100, 1)}%`,
         s ? `sound rms ${f(s.rmsDb, 0)}dB  peak ${f(s.peakDb, 0)}dB  floor ${f(s.floorDb, 0)}dB` : `sound — ${info.speaking ? '(Darpan speaking)' : ''}`,
         `failing ${info.problems.join(', ') || 'none'}${info.ignored.length ? `  ignored ${info.ignored.join(', ')}` : ''}`,
         info.lightOverride ? `light override ${info.lightOverride}` : '',

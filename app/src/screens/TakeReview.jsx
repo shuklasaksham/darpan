@@ -36,6 +36,22 @@ export default function TakeReview({ take, shot, shotIndex, isLast, speaker, lan
     v.play().catch(() => {});
   }, [take.url, withSound]);
 
+  // ?debug: what the phone makes of the take (format, size, length, state).
+  const debug = new URLSearchParams(window.location.search).has('debug');
+  const [videoInfo, setVideoInfo] = useState('');
+  useEffect(() => {
+    if (!debug) return;
+    const id = setInterval(() => {
+      const v = videoRef.current;
+      if (!v) return;
+      const mb = take.blob ? `${(take.blob.size / 1e6).toFixed(1)} MB` : '?';
+      setVideoInfo(
+        `${take.blob?.type || 'no type'} · ${mb} · ${v.videoWidth}×${v.videoHeight} · length ${Number.isFinite(v.duration) ? v.duration.toFixed(2) : v.duration}s · at ${v.currentTime.toFixed(2)}s · ${v.paused ? 'paused' : 'playing'} · ready ${v.readyState}/4 · net ${v.networkState}${v.error ? ` · error ${v.error.code} ${v.error.message}` : ''}`,
+      );
+    }, 500);
+    return () => clearInterval(id);
+  }, [debug, take.blob]);
+
   const label = `Shot ${shotIndex + 1}${shot?.title ? ` · ${shot.title}` : ''}`;
   const takeLabel = result?.takeNumber ? `Take ${result.takeNumber}` : null;
 
@@ -62,6 +78,7 @@ export default function TakeReview({ take, shot, shotIndex, isLast, speaker, lan
             <Glyph name="play" />
           </button>
         )}
+        {debug && videoInfo && <pre className="debug-panel" style={{ position: 'absolute', left: 8, right: 8, bottom: 8, whiteSpace: 'pre-wrap' }}>{videoInfo}</pre>}
         <div className="over">
           <button className="cam-btn" onClick={onRetake} aria-label="Back to the camera" disabled={take.status === 'uploading'}>
             <Glyph name="back" size={22} />
